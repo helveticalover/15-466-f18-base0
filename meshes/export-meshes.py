@@ -27,6 +27,7 @@ import argparse
 bpy.ops.wm.open_mainfile(filepath=infile)
 
 do_texcoord = False
+do_vertcolor = True
 
 #names of objects whose meshes to write (not actually the names of the meshes):
 to_write = []
@@ -86,6 +87,13 @@ for name in to_write:
 		else:
 			uvs = obj.data.uv_layers.active.data
 
+	vert_colors = None
+	if do_vertcolor:
+		if len(obj.data.vertex_colors) == 0:
+			print("WARNING: trying to export vertex color data, but object '" + name + "' does not have vertex color data; will output (1.0, 1.0, 1.0)")
+		else:
+			vert_colors = obj.data.vertex_colors.active.data
+
 	#write the mesh:
 	for poly in mesh.polygons:
 		assert(len(poly.loop_indices) == 3)
@@ -97,10 +105,14 @@ for name in to_write:
 				data += struct.pack('f', x)
 			for x in loop.normal:
 				data += struct.pack('f', x)
-			#TODO: set 'col' based on object's active vertex colors array.
 			# you should be able to use code much like the texcoord code below.
-			col = mathutils.Color((1.0, 1.0, 1.0))
-			data += struct.pack('BBBB', int(col.r * 255), int(col.g * 255), int(col.b * 255), 255)
+			# NOTE: Based on discussion from https://blender.stackexchange.com/questions/909/how-can-i-set-and-get-the-vertex-color-property
+			if do_vertcolor:
+				if vert_colors != None:
+					col = vert_colors[poly.loop_indices[i]].color
+				else:
+					col = mathutils.Color((1.0, 1.0, 1.0))
+				data += struct.pack('BBBB', int(col.r * 255), int(col.g * 255), int(col.b * 255), 255)
 
 			if do_texcoord:
 				if uvs != None:

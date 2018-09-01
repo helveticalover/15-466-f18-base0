@@ -58,21 +58,58 @@ struct Game {
 		GLsizei count = 0;
 	};
 
-	Mesh tile_mesh;
-	Mesh cursor_mesh;
-	Mesh doll_mesh;
-	Mesh egg_mesh;
-	Mesh cube_mesh;
+	// TODO
+//	Mesh tile_mesh;
+//	Mesh cursor_mesh;
+//	Mesh doll_mesh;
+//	Mesh egg_mesh;
+//	Mesh cube_mesh;
+
+    Mesh avatar_mesh;
+    Mesh peanut_mesh;
+    Mesh bread_mesh;
+    Mesh jelly_mesh;
+    Mesh counter_mesh;
+    Mesh serve_mesh;
+    Mesh tile_mesh;
 
 	GLuint meshes_for_simple_shading_vao = -1U; //vertex array object that describes how to connect the meshes_vbo to the simple_shading_program
 
 	//------- game state -------
 
-	glm::uvec2 board_size = glm::uvec2(5,4);
+	glm::uvec2 board_size = glm::uvec2(4,4);
+	glm::uvec2 avatar_loc = glm::vec2(2,2);
+
+	struct {
+		glm::uvec2 peanut_loc = glm::vec2(0,0);
+		glm::uvec2 bread_loc = glm::vec2(0,0);
+		glm::uvec2 jelly_loc = glm::vec2(0,0);
+	} locations;
+
+	struct {
+		bool peanut_pickup = false;
+		bool bread_pickup = false;
+		bool jelly_pickup = false;
+	} progress;
+
+//		struct {
+//		bool go_left = false;
+//		bool go_right = false;
+//		bool go_up = false;
+//		bool go_down = false;
+//	} controls;
+
+	//------- level generation ------
+
+	uint32_t levels_passed = 0;
+//	bool generate_level(/*glm::uvec2 board_size*/);
+
+	//------- base code -------------
+
 	std::vector< Mesh const * > board_meshes;
 	std::vector< glm::quat > board_rotations;
 
-	glm::uvec2 cursor = glm::vec2(0,0);
+	//	glm::uvec2 cursor = glm::vec2(0,0);
 
 	struct {
 		bool roll_left = false;

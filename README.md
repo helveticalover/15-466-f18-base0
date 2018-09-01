@@ -3,7 +3,7 @@
 
 Title: (TODO: your game's title)
 
-Author: (TODO: your name)
+Author: Yitong Li
 
 Design Document: [TODO: name of design document](TODO: link to design document)
 

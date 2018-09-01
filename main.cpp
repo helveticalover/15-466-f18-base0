@@ -23,8 +23,8 @@
 int main(int argc, char **argv) {
 	struct {
 		//TODO: this is where you set the title and size of your game window
-		std::string title = "TODO: Game Title";
-		glm::uvec2 size = glm::uvec2(640, 400);
+		std::string title = "Undercooked";
+		glm::uvec2 size = glm::uvec2(640, 640);
 	} config;
 
 	//------------  initialization ------------
@@ -84,12 +84,14 @@ int main(int argc, char **argv) {
 		}
 	}
 
+	// TODO: Use this for debugging
 	//Hide mouse cursor (note: showing can be useful for debugging):
 	//SDL_ShowCursor(SDL_DISABLE);
 
 
 	//------------ create game object (loads assets) --------------
 
+	// shared_ptr ref deleted when last shared_ptr to ref is destroyed (e.g. exceptions)
 	std::shared_ptr< Game > game = std::make_shared< Game >();
 
 	//------------ main loop ------------
@@ -106,7 +108,7 @@ int main(int argc, char **argv) {
 		window_size = glm::uvec2(w, h);
 		SDL_GL_GetDrawableSize(window, &w, &h);
 		drawable_size = glm::uvec2(w, h);
-		glViewport(0, 0, drawable_size.x, drawable_size.y);
+		glViewport(0, 0, drawable_size.x, drawable_size.y);	// Specify viewport size for Gl
 	};
 	on_resize();
 

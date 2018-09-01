@@ -1,6 +1,6 @@
 #include "Game.hpp"
 
-#include "gl_errors.hpp" //helper for dumpping OpenGL error messages
+#include "gl_errors.hpp" //helper for dumping OpenGL error messages
 #include "read_chunk.hpp" //helper for reading a vector of structures from a file
 #include "data_path.hpp" //helper to get paths relative to executable
 
@@ -109,7 +109,7 @@ Game::Game() {
 	static_assert(sizeof(Vertex) == 28, "Vertex should be packed.");
 
 	{ //load mesh data from a binary blob:
-		std::ifstream blob(data_path("meshes.blob"), std::ios::binary);
+		std::ifstream blob(data_path("pbj_meshes.blob"), std::ios::binary);
 		//The blob will be made up of three chunks:
 		// the first chunk will be vertex data (interleaved position/normal/color)
 		// the second chunk will be characters
@@ -173,11 +173,21 @@ Game::Game() {
 			}
 			return f->second;
 		};
+
+		// TODO
+//		tile_mesh = lookup("Tile");
+//		cursor_mesh = lookup("Cursor");
+//		doll_mesh = lookup("Doll");
+//		egg_mesh = lookup("Egg");
+//		cube_mesh = lookup("Cube");
+
+		avatar_mesh = lookup("Avatar");
+		peanut_mesh = lookup("Peanut");
+		bread_mesh = lookup("Bread");
+		jelly_mesh = lookup("Jelly");
+		counter_mesh = lookup("Counter");
+		serve_mesh = lookup("Serve");
 		tile_mesh = lookup("Tile");
-		cursor_mesh = lookup("Cursor");
-		doll_mesh = lookup("Doll");
-		egg_mesh = lookup("Egg");
-		cube_mesh = lookup("Cube");
 	}
 
 	{ //create vertex array object to hold the map from the mesh vertex buffer to shader program attributes:
@@ -185,6 +195,7 @@ Game::Game() {
 		glBindVertexArray(meshes_for_simple_shading_vao);
 		glBindBuffer(GL_ARRAY_BUFFER, meshes_vbo);
 		//note that I'm specifying a 3-vector for a 4-vector attribute here, and this is okay to do:
+		// Do this for position, normal, and color vertex attributes
 		glVertexAttribPointer(simple_shading.Position_vec4, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLbyte *)0 + offsetof(Vertex, Position));
 		glEnableVertexAttribArray(simple_shading.Position_vec4);
 		if (simple_shading.Normal_vec3 != -1U) {
@@ -200,14 +211,17 @@ Game::Game() {
 
 	GL_ERRORS();
 
+	// TODO
 	//----------------
 	//set up game board with meshes and rolls:
 	board_meshes.reserve(board_size.x * board_size.y);
 	board_rotations.reserve(board_size.x * board_size.y);
 	std::mt19937 mt(0xbead1234);
 
-	std::vector< Mesh const * > meshes{ &doll_mesh, &egg_mesh, &cube_mesh };
+//	std::vector< Mesh const * > meshes{ &doll_mesh, &egg_mesh, &cube_mesh };
+	std::vector< Mesh const * > meshes{ &avatar_mesh, &peanut_mesh, &bread_mesh, &jelly_mesh, &counter_mesh, &serve_mesh};
 
+	// Pick random meshes with default rotations
 	for (uint32_t i = 0; i < board_size.x * board_size.y; ++i) {
 		board_meshes.emplace_back(meshes[mt()%meshes.size()]);
 		board_rotations.emplace_back(glm::quat());
@@ -227,13 +241,14 @@ Game::~Game() {
 	GL_ERRORS();
 }
 
+// TODO
 bool Game::handle_event(SDL_Event const &evt, glm::uvec2 window_size) {
 	//ignore any keys that are the result of automatic key repeat:
 	if (evt.type == SDL_KEYDOWN && evt.key.repeat) {
 		return false;
 	}
 	//handle tracking the state of WSAD for roll control:
-	if (evt.type == SDL_KEYDOWN || evt.type == SDL_KEYUP) {
+	if (evt.type == SDL_KEYDOWN || evt.type == SDL_KEYUP) {	// Press/release keys
 		if (evt.key.keysym.scancode == SDL_SCANCODE_W) {
 			controls.roll_up = (evt.type == SDL_KEYDOWN);
 			return true;
@@ -249,29 +264,29 @@ bool Game::handle_event(SDL_Event const &evt, glm::uvec2 window_size) {
 		}
 	}
 	//move cursor on L/R/U/D press:
-	if (evt.type == SDL_KEYDOWN && evt.key.repeat == 0) {
-		if (evt.key.keysym.scancode == SDL_SCANCODE_LEFT) {
-			if (cursor.x > 0) {
-				cursor.x -= 1;
-			}
-			return true;
-		} else if (evt.key.keysym.scancode == SDL_SCANCODE_RIGHT) {
-			if (cursor.x + 1 < board_size.x) {
-				cursor.x += 1;
-			}
-			return true;
-		} else if (evt.key.keysym.scancode == SDL_SCANCODE_UP) {
-			if (cursor.y + 1 < board_size.y) {
-				cursor.y += 1;
-			}
-			return true;
-		} else if (evt.key.keysym.scancode == SDL_SCANCODE_DOWN) {
-			if (cursor.y > 0) {
-				cursor.y -= 1;
-			}
-			return true;
-		}
-	}
+//	if (evt.type == SDL_KEYDOWN && evt.key.repeat == 0) {
+//		if (evt.key.keysym.scancode == SDL_SCANCODE_LEFT) {
+//			if (cursor.x > 0) {
+//				cursor.x -= 1;
+//			}
+//			return true;
+//		} else if (evt.key.keysym.scancode == SDL_SCANCODE_RIGHT) {
+//			if (cursor.x + 1 < board_size.x) {
+//				cursor.x += 1;
+//			}
+//			return true;
+//		} else if (evt.key.keysym.scancode == SDL_SCANCODE_UP) {
+//			if (cursor.y + 1 < board_size.y) {
+//				cursor.y += 1;
+//			}
+//			return true;
+//		} else if (evt.key.keysym.scancode == SDL_SCANCODE_DOWN) {
+//			if (cursor.y > 0) {
+//				cursor.y -= 1;
+//			}
+//			return true;
+//		}
+//	}
 	return false;
 }
 
@@ -292,13 +307,20 @@ void Game::update(float elapsed) {
 		dr = glm::angleAxis(-amt, glm::vec3(1.0f, 0.0f, 0.0f)) * dr;
 	}
 	if (dr != glm::quat()) {
-		for (uint32_t x = 0; x < board_size.x; ++x) {
-			glm::quat &r = board_rotations[cursor.y * board_size.x + x];
-			r = glm::normalize(dr * r);
-		}
+//		for (uint32_t x = 0; x < board_size.x; ++x) {
+//			glm::quat &r = board_rotations[cursor.y * board_size.x + x];
+//			r = glm::normalize(dr * r);
+//		}
+//		for (uint32_t y = 0; y < board_size.y; ++y) {
+//			if (y != cursor.y) {
+//				glm::quat &r = board_rotations[y * board_size.x + cursor.x];
+//				r = glm::normalize(dr * r);
+//			}
+//		}
+
 		for (uint32_t y = 0; y < board_size.y; ++y) {
-			if (y != cursor.y) {
-				glm::quat &r = board_rotations[y * board_size.x + cursor.x];
+			for (uint32_t x = 0; x < board_size.x; ++x) {
+				glm::quat &r = board_rotations[y * board_size.x + x];
 				r = glm::normalize(dr * r);
 			}
 		}
@@ -358,6 +380,14 @@ void Game::draw(glm::uvec2 drawable_size) {
 		glDrawArrays(GL_TRIANGLES, mesh.first, mesh.count);
 	};
 
+	glm::mat4 mesh_scale = glm::mat4(
+			0.5f, 0.0f, 0.0f, 0.0f,
+			0.0f, 0.5f, 0.0f, 0.0f,
+			0.0f, 0.0f, 0.5f, 0.0f,
+			0.0f, 0.0f, 0.0f, 1.0f
+			);
+
+	// TODO
 	for (uint32_t y = 0; y < board_size.y; ++y) {
 		for (uint32_t x = 0; x < board_size.x; ++x) {
 			draw_mesh(tile_mesh,
@@ -366,7 +396,7 @@ void Game::draw(glm::uvec2 drawable_size) {
 					0.0f, 1.0f, 0.0f, 0.0f,
 					0.0f, 0.0f, 1.0f, 0.0f,
 					x+0.5f, y+0.5f,-0.5f, 1.0f
-				)
+				) * mesh_scale
 			);
 			draw_mesh(*board_meshes[y*board_size.x+x],
 				glm::mat4(
@@ -375,19 +405,10 @@ void Game::draw(glm::uvec2 drawable_size) {
 					0.0f, 0.0f, 1.0f, 0.0f,
 					x+0.5f, y+0.5f, 0.0f, 1.0f
 				)
-				* glm::mat4_cast(board_rotations[y*board_size.x+x])
+				* glm::mat4_cast(board_rotations[y*board_size.x+x]) * mesh_scale
 			);
 		}
 	}
-	draw_mesh(cursor_mesh,
-		glm::mat4(
-			1.0f, 0.0f, 0.0f, 0.0f,
-			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, 0.0f,
-			cursor.x+0.5f, cursor.y+0.5f, 0.0f, 1.0f
-		)
-	);
-
 
 	glUseProgram(0);
 
