@@ -16,6 +16,7 @@
 //helper defined later; throws if shader compilation fails:
 static glm::mat4 location_v3m4(glm::vec3 v, glm::quat r);
 static GLuint compile_shader(GLenum type, std::string const &source);
+static bool adjacent(glm::uvec3 locationA, glm::uvec3 locationB);
 
 Game::Game() {
 	{ //create an opengl program to perform sun/sky (well, directional+hemispherical) lighting:
@@ -87,9 +88,6 @@ Game::Game() {
 			std::cerr << "Info log: " << std::string(info_log.begin(), info_log.begin() + length);
 			throw std::runtime_error("failed to link program");
 		}
-
-//		glEnable(GL_DEPTH_CLAMP);
-//        glDisable( GL_CLIP_PLANE0, );
 	}
 
 	{ //read back uniform and attribute locations from the shader program:
@@ -182,13 +180,15 @@ Game::Game() {
 		};
 
 		avatar_mesh = lookup("Avatar");
+		counter_mesh = lookup("Counter");
+		tile_mesh = lookup("Tile");
 		peanut_mesh = lookup("Peanut");
 		bread_mesh = lookup("Bread");
 		jelly_mesh = lookup("Jelly");
-		counter_mesh = lookup("Counter");
 		serve_mesh = lookup("Serve");
-		tile_mesh = lookup("Tile");
-	}
+
+		key_counters = {&peanut, &bread, &jelly, &serve};
+	};
 
 	{ //create vertex array object to hold the map from the mesh vertex buffer to shader program attributes:
 		glGenVertexArrays(1, &meshes_for_simple_shading_vao);
@@ -211,13 +211,12 @@ Game::Game() {
 
 	GL_ERRORS();
 
-    top.is_column = 0; top.is_end = 0;
-    bottom.is_column = 0; bottom.is_end = 1;
-    left.is_column = 1; left.is_end = 0;
-    right.is_column = 1; right.is_end = 1;
+    left.is_row = 0; top.is_end = 0;
+    right.is_row = 0; bottom.is_end = 1;
+    top.is_row = 1; left.is_end = 0;
+    bottom.is_row = 1; right.is_end = 1;
 
 	edges = { &top, &bottom, &left, &right };
-	key_meshes = { &peanut_mesh, &bread_mesh, &jelly_mesh, &serve_mesh };
 
 	generate_level();
 }
@@ -236,48 +235,51 @@ Game::~Game() {
 }
 
 void Game::generate_level() {
-//	//set up game board with meshes and rolls:
-//	board_meshes.reserve(board_size.x * board_size.y);
-//	board_rotations.reserve(board_size.x * board_size.y);
-//	std::mt19937 mt(0xbead1234);
-//
-//	// Pick random meshes with default rotations
-//	for (uint32_t i = 0; i < board_size.x * board_size.y; ++i) {
-//		board_meshes.emplace_back(key_meshes[mt()%key_meshes.size()]);
-//		board_rotations.emplace_back(glm::quat());
-//	}
-
-	std::set< const Edge *> remaining_edges = edges;
-
-	// Randomly place key counters on edges
+    // Randomly place key counters on edges
+	std::set< Edge *> remaining_edges = edges;
 	for (uint32_t i = 0; i < 4; ++i) {
-		const Edge *edge = *std::next(remaining_edges.begin(), rand()%remaining_edges.size());
+		Edge *edge = *std::next(remaining_edges.begin(), rand()%remaining_edges.size());
 
-		uint32_t max = board_size[!(edge->is_column)];
-		uint32_t placement = 1 + rand() % (max-2);
-		uint32_t increment = edge->is_column ? board_size.x : 1;
-		uint32_t start = edge->is_end * (edge->is_column ? board_size.x-1 : board_size.x*(board_size.y-1));
+		uint32_t max = board_size[edge->is_row];
+		uint32_t increment = edge->is_row ? board_size.x : 1;
+		uint32_t start = edge->is_end * (edge->is_row ? board_size.x-1 : board_size.x*(board_size.y-1));
+
+        uint32_t placement = 1 + rand() % (max-2);
 
 		uint32_t index = start + placement * increment;
 		uint32_t x = index / board_size.x;
 		uint32_t y = index % board_size.x;
-		assert(x == 0 || x == board_size.x-1 || y == 0 || y == board_size.y-1);
-
 		glm::uvec3 location = glm::uvec3(x, y, 0.0f);
-		glm::uvec3 *itr = (glm::uvec3 *)(&key_locations);
-		*(itr+i) = location;
+
+        // Make sure counter doesn't spawn near avatar
+        while (adjacent(location, avatar_location)) {
+            placement = 1 + (placement + 1) % (max - 2);
+            uint32_t index = start + placement * increment;
+            uint32_t x = index / board_size.x;
+            uint32_t y = index % board_size.x;
+            location = glm::uvec3(x, y, 0.0f);
+        }
+
+		CounterInfo *counter = key_counters[i];
+		counter->location = location;
+		counter->edge = edge;
+
+		// Rotate the serve counter to point outwards
+		if (i == 3) {
+            counter->rotation = glm::quat(glm::vec3(0.0f, 0.0f,
+                    glm::radians((edge->is_row) * 90.0f + (edge->is_end) * 180.0f)));
+		}
 
 		remaining_edges.erase(edge);
 	}
 }
 
-// TODO
 bool Game::handle_event(SDL_Event const &evt, glm::uvec2 window_size) {
-	//ignore any keys that are the result of automatic key repeat:
-	if (evt.type == SDL_KEYDOWN && evt.key.repeat) {
-		return false;
-	}
-	//handle tracking the state of WSAD for roll control:
+    //ignore any keys that are the result of automatic key repeat:
+    if (evt.type == SDL_KEYDOWN && evt.key.repeat) {
+        return false;
+    }
+    //handle tracking the state of WASD for avatar movement:
 	if (evt.type == SDL_KEYDOWN || evt.type == SDL_KEYUP) {	// Press/release keys
 		if (evt.key.keysym.scancode == SDL_SCANCODE_W) {
 			controls.go_up = (evt.type == SDL_KEYDOWN);
@@ -292,77 +294,126 @@ bool Game::handle_event(SDL_Event const &evt, glm::uvec2 window_size) {
 			controls.go_right = (evt.type == SDL_KEYDOWN);
 			return true;
 		}
-//		else if (evt.key.keysym.scancode == SDL_SCANCODE_SPACE) {
-//		    try_pickup();
-//		}
-	}
+  	}
+
+  	// Testing
+//  	if (evt.type == SDL_KEYDOWN && evt.key.repeat == 0) {
+//  	    if (evt.key.keysym.scancode == SDL_SCANCODE_SPACE) {
+//  	        generate_level();
+//  	    }
+//  	}
+
+    //----------------- Grid-based movement ------------------
+//    if (evt.type == SDL_KEYDOWN && evt.key.repeat == 0) {
+//        if (evt.key.keysym.scancode == SDL_SCANCODE_A) {
+//            avatar_location.x -= 1;
+//            avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(180.0f)));
+//        }
+//        if (evt.key.keysym.scancode == SDL_SCANCODE_D) {
+//            avatar_location.x += 1;
+//            avatar_rotation = glm::quat();
+//        }
+//        if (evt.key.keysym.scancode == SDL_SCANCODE_W) {
+//            avatar_location.y += 1;
+//            avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(90.0f)));
+//        }
+//        if (evt.key.keysym.scancode == SDL_SCANCODE_S) {
+//            avatar_location.y -= 1;
+//            avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(-90.0f)));
+//        }
+//
+//        avatar_location.x = glm::clamp(avatar_location.x, 1.0f, (float) board_size.x - 2);
+//        avatar_location.y = glm::clamp(avatar_location.y, 1.0f, (float) board_size.y - 2);
+//        return true;
+//    }
 
 	return false;
 }
 
 void Game::update(float elapsed) {
-	//if the roll keys are pressed, rotate everything on the same row or column as the cursor:
-//	glm::quat dr = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-//	float amt = elapsed * 1.0f;
-//	if (controls.roll_left) {
-//		dr = glm::angleAxis(amt, glm::vec3(0.0f, 1.0f, 0.0f)) * dr;
-//	}
-//	if (controls.roll_right) {
-//		dr = glm::angleAxis(-amt, glm::vec3(0.0f, 1.0f, 0.0f)) * dr;
-//	}
-//	if (controls.roll_up) {
-//		dr = glm::angleAxis(amt, glm::vec3(1.0f, 0.0f, 0.0f)) * dr;
-//	}
-//	if (controls.roll_down) {
-//		dr = glm::angleAxis(-amt, glm::vec3(1.0f, 0.0f, 0.0f)) * dr;
-//	}
-//	if (dr != glm::quat()) {
-//		for (uint32_t y = 0; y < board_size.y; ++y) {
-//			for (uint32_t x = 0; x < board_size.x; ++x) {
-//				glm::quat &r = board_rotations[y * board_size.x + x];
-//				r = glm::normalize(dr * r);
-//			}
-//		}
-//	}
+
+    // --------------- Pickup -------------------------------
+    {
+        auto touching_counter = [&](CounterInfo *counter, glm::uvec3 compare_location) -> bool {
+			float x_lo = counter->location.x - 1.0f;
+			float x_hi = counter->location.x + 1.0f;
+			float y_lo = counter->location.y - 1.0f;
+			float y_hi = counter->location.y + 1.0f;
+
+			if ((compare_location.x >= x_lo && compare_location.x <= x_hi) &&
+			    (compare_location.y >= y_lo && compare_location.y <= y_hi)) {
+				return true;
+			}
+			return false;
+        };
+
+        if (touching_counter(&peanut, avatar_location)) {
+        	progress.peanut_pickup = true;
+        }
+        if (touching_counter(&bread, avatar_location)) {
+        	progress.bread_pickup = true;
+        }
+        if (touching_counter(&jelly, avatar_location)) {
+        	progress.jelly_pickup = true;
+        }
+        if (touching_counter(&serve, avatar_location) && progress.peanut_pickup &&
+        	progress.bread_pickup && progress.jelly_pickup) {
+        	++levels_passed;
+        	if (levels_passed == 5) {
+        	    // TODO: level progression
+//        	    board_size.x += 2;
+//        	    board_size.y += 2;
+//        	    levels_passed = 0;
+        	}
+        	progress.peanut_pickup = false;
+        	progress.bread_pickup = false;
+        	progress.jelly_pickup = false;
+        	generate_level();
+        }
+    }
+
+	// --------------- Physics-based movement ---------------
 
     // NOTE: Based on discussion from http://www.opengl-tutorial.org/intermediate-tutorials/tutorial-17-quaternions/
-    // Default orientation is (1,0,0);
-	if (controls.go_left) {
-		x_velocity -= elapsed * acceleration;
-		avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(180.0f)));
-	}
-	if (controls.go_right) {
-		x_velocity += elapsed * acceleration;
-        avatar_rotation = glm::quat();
-	}
-	if (controls.go_up) {
-		y_velocity += elapsed * acceleration;
-		avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(90.0f)));
-	}
-	if (controls.go_down) {
-        y_velocity -= elapsed * acceleration;
-        avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(-90.0f)));
-    }
+    // Default avatar orientation is (1,0);
+    {
+        if (controls.go_left) {
+            x_velocity -= elapsed * acceleration;
+            avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(180.0f)));
+        }
+        if (controls.go_right) {
+            x_velocity += elapsed * acceleration;
+            avatar_rotation = glm::quat();
+        }
+        if (controls.go_up) {
+            y_velocity += elapsed * acceleration;
+            avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(90.0f)));
+        }
+        if (controls.go_down) {
+            y_velocity -= elapsed * acceleration;
+            avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(-90.0f)));
+        }
 
-    //TODO: Add deceleration/friction
-    if (!controls.go_left && !controls.go_right) {
-        x_velocity = 0.0f;
-    }
-    if (!controls.go_up && !controls.go_down) {
-        y_velocity = 0.0f;
-    }
+        //TODO: Add deceleration/friction
+        if (!controls.go_left && !controls.go_right) {
+            x_velocity = 0.0f;
+        }
+        if (!controls.go_up && !controls.go_down) {
+            y_velocity = 0.0f;
+        }
 
-    x_velocity = glm::clamp(x_velocity, -max_velocity, max_velocity);
-    y_velocity = glm::clamp(y_velocity, -max_velocity, max_velocity);
-    glm::vec3 mv = x_velocity * glm::vec3(1.0f, 0.0f, 0.0f) + y_velocity  * glm::vec3(0.0f, 1.0f, 0.0f);
+        x_velocity = glm::clamp(x_velocity, -max_velocity, max_velocity);
+        y_velocity = glm::clamp(y_velocity, -max_velocity, max_velocity);
+        assert(-max_velocity <= x_velocity && x_velocity <= max_velocity);
+        assert(-max_velocity <= y_velocity && y_velocity <= max_velocity);
+        glm::vec3 mv = x_velocity * glm::vec3(1.0f, 0.0f, 0.0f) + y_velocity * glm::vec3(0.0f, 1.0f, 0.0f);
 
-	if (mv != glm::vec3(0.0f, 0.0f, 0.0f)) {
-		avatar_location += mv;
-		avatar_location.x = std::max(1.0f, avatar_location.x);
-		avatar_location.x = std::min(board_size.x-2.0f, avatar_location.x);
-		avatar_location.y = std::max(1.0f, avatar_location.y);
-		avatar_location.y = std::min(board_size.y-2.0f, avatar_location.y);
-	}
+        if (mv != glm::vec3(0.0f, 0.0f, 0.0f)) {
+            avatar_location += mv;
+            avatar_location.x = glm::clamp(avatar_location.x, 1.0f, (float) board_size.x - 2);
+            avatar_location.y = glm::clamp(avatar_location.y, 1.0f, (float) board_size.y - 2);
+        }
+    }
 }
 
 void Game::draw(glm::uvec2 drawable_size) {
@@ -387,15 +438,9 @@ void Game::draw(glm::uvec2 drawable_size) {
                 0.5f, -0.75f, 1.0f, 0.0f,
                 0.0f, 0.0f, 0.0f, 1.0f
         );
-//		glm::mat4 shear_y = glm::mat4(
-//				1.0f, 0.0f, 0.0f, 0.0f,
-//				0.5f, 1.0f, 0.0f, 0.0f,
-//				0.0f, 0.0f, 1.0f, 0.0f,
-//				0.0f, 0.0f, 0.0f, 1.0f
-//		);
 
 		//NOTE: glm matrices are specified in column-major order
-		world_to_clip = /*shear_y */ shear_z * glm::mat4(
+		world_to_clip = shear_z * glm::mat4(
 			scale / aspect, 0.0f, 0.0f, 0.0f,
 			0.0f, scale, 0.0f, 0.0f,
 			0.0f, 0.0f,-0.25f, 0.0f,
@@ -436,6 +481,20 @@ void Game::draw(glm::uvec2 drawable_size) {
 		glDrawArrays(GL_TRIANGLES, mesh.first, mesh.count);
 	};
 
+	auto on_edge = [&](const uint32_t x, const uint32_t y) -> bool {
+        return x == 0 || x == board_size.x-1 || y == 0 || y == board_size.y-1;
+	};
+
+	auto not_occupied = [&](const uint32_t x, const uint32_t y) -> bool {
+        glm::uvec3 compare = glm::uvec3(x,y,0);
+        for (CounterInfo *c : key_counters) {
+			if (c->location == compare) {
+				return false;
+			}
+        }
+        return true;
+	};
+
 	for (uint32_t i = 0; i < board_size.x * board_size.y; ++i) {
 		uint32_t x = i / board_size.x;
 		uint32_t y = i % board_size.y;
@@ -446,24 +505,21 @@ void Game::draw(glm::uvec2 drawable_size) {
 		}
 	}
 	draw_mesh(avatar_mesh, location_v3m4(avatar_location, avatar_rotation));
-	draw_mesh(peanut_mesh, location_v3m4(key_locations.peanut, glm::quat()));
-	draw_mesh(bread_mesh, location_v3m4(key_locations.bread, glm::quat()));
-	draw_mesh(jelly_mesh, location_v3m4(key_locations.jelly, glm::quat()));
-	draw_mesh(serve_mesh, location_v3m4(key_locations.serve, glm::quat()));
+	draw_mesh(serve_mesh, location_v3m4(serve.location, serve.rotation));
+
+	if (!progress.peanut_pickup) {
+		draw_mesh(peanut_mesh, location_v3m4(peanut.location, peanut.rotation));
+	}
+	if (!progress.bread_pickup) {
+		draw_mesh(bread_mesh, location_v3m4(bread.location, bread.rotation));
+	}
+	if (!progress.jelly_pickup) {
+		draw_mesh(jelly_mesh, location_v3m4(jelly.location, jelly.rotation));
+	}
 
 	glUseProgram(0);
 
 	GL_ERRORS();
-}
-
-bool Game::on_edge(uint32_t x, uint32_t y) {
-	return x == 0 || x == board_size.x-1 || y == 0 || y == board_size.y-1;
-}
-
-bool Game::not_occupied(uint32_t x, uint32_t y) {
-	glm::uvec3 compare = glm::uvec3(x,y,0);
-	return compare != key_locations.peanut && compare != key_locations.bread &&
-		   compare != key_locations.jelly && compare != key_locations.serve;
 }
 
 static glm::mat4 location_v3m4(glm::vec3 v, glm::quat r) {
@@ -473,6 +529,19 @@ static glm::mat4 location_v3m4(glm::vec3 v, glm::quat r) {
 			0.0f, 0.0f, 1.0f, 0.0f,
 			v.x+0.5f, v.y+0.5f, v.z, 1.0f
 	) * glm::mat4_cast(r);
+}
+
+static bool adjacent(glm::uvec3 locationA, glm::uvec3 locationB) {
+    float x_lo = locationA.x - 2.0f;
+    float x_hi = locationA.x + 2.0f;
+    float y_lo = locationA.y - 2.0f;
+    float y_hi = locationA.y + 2.0f;
+
+    if ((locationB.x >= x_lo && locationB.x <= x_hi) &&
+        (locationB.y >= y_lo && locationB.y <= y_hi)) {
+        return true;
+    }
+    return false;
 }
 
 //create and return an OpenGL vertex shader from source:

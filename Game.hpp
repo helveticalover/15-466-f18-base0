@@ -19,6 +19,7 @@ struct Game {
 	Game();
 	~Game();
 
+	//randomizes board
     void generate_level();
 
 	//handle_event is called when new mouse or keyboard events are received:
@@ -65,14 +66,12 @@ struct Game {
 	};
 
     Mesh avatar_mesh;
+    Mesh counter_mesh;
+    Mesh tile_mesh;
     Mesh peanut_mesh;
     Mesh bread_mesh;
     Mesh jelly_mesh;
-    Mesh counter_mesh;
     Mesh serve_mesh;
-    Mesh tile_mesh;
-
-    std::vector< Mesh const * > key_meshes;
 
 	GLuint meshes_for_simple_shading_vao = -1U; //vertex array object that describes how to connect the meshes_vbo to the simple_shading_program
 
@@ -89,13 +88,13 @@ struct Game {
 	// NOTE: Based on discussion from http://www.cplusplus.com/forum/general/29835/
 	glm::vec3 avatar_location = glm::vec3(4,4,0);
 	glm::quat avatar_rotation = glm::quat();
-	const float max_velocity = 0.5f;
-    const float acceleration = 1.0f; // tiles per sec^2
+	const float max_velocity = 0.25f;
+    const float acceleration = 0.5f; // tiles per sec^2
 	float x_velocity = 0.0f; // tiles per second
     float y_velocity = 0.0f;
 
 	struct Edge {
-	    uint8_t is_column = 0;
+	    uint8_t is_row = 0;
 	    uint8_t is_end = 0;
 	};
 
@@ -103,14 +102,19 @@ struct Game {
     Edge bottom;
     Edge left;
     Edge right;
-	std::set< const Edge * > edges;
+	std::set< Edge * > edges;
 
-	struct {
-		glm::uvec3 peanut = glm::uvec3(0,0,0);
-		glm::uvec3 bread = glm::uvec3(0,0,0);
-		glm::uvec3 jelly = glm::uvec3(0,0,0);
-		glm::uvec3 serve = glm::uvec3(0,0,0);
-	} key_locations;
+	struct CounterInfo{
+	    glm::uvec3 location = glm::uvec3(0,0,0);
+	    glm::quat rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(-90.0f)));
+	    Edge *edge;
+	};
+
+	CounterInfo peanut;
+	CounterInfo bread;
+	CounterInfo jelly;
+	CounterInfo serve;
+    std::vector<CounterInfo *>key_counters;
 
 	struct {
 		bool peanut_pickup = false;
@@ -119,27 +123,11 @@ struct Game {
 	} progress;
 
 	struct {
-		bool go_left = false;
-		bool go_right = false;
-		bool go_up = false;
-		bool go_down = false;
+		float go_left = false;
+		float go_right = false;
+		float go_up = false;
+		float go_down = false;
 	} controls;
 
 	uint32_t levels_passed = 0;
-
-    bool not_occupied(uint32_t x, uint32_t y);
-    bool on_edge(uint32_t x, uint32_t y);
-
-	//------- base code -------------
-
-//	std::vector< const Mesh * > board_meshes;
-//	std::vector< glm::quat > board_rotations;
-//
-//	struct {
-//		bool roll_left = false;
-//		bool roll_right = false;
-//		bool roll_up = false;
-//		bool roll_down = false;
-//	} controls;
-
 };
