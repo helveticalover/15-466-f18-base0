@@ -8,11 +8,13 @@
 
 #include <iostream>
 #include <fstream>
+#include <set>
 #include <map>
 #include <cstddef>
 #include <random>
 
 //helper defined later; throws if shader compilation fails:
+static glm::mat4 location_v3m4(glm::vec3 v, glm::quat r);
 static GLuint compile_shader(GLenum type, std::string const &source);
 
 Game::Game() {
@@ -20,6 +22,7 @@ Game::Game() {
 		GLuint vertex_shader = compile_shader(GL_VERTEX_SHADER,
 			"#version 330\n"
 			"uniform mat4 object_to_clip;\n"
+            "uniform mat4 mv;\n"
 			"uniform mat4x3 object_to_light;\n"
 			"uniform mat3 normal_to_light;\n"
 			"layout(location=0) in vec4 Position;\n" //note: layout keyword used to make sure that the location-0 attribute is always bound to something
@@ -29,7 +32,7 @@ Game::Game() {
 			"out vec3 normal;\n"
 			"out vec4 color;\n"
 			"void main() {\n"
-			"	gl_Position = object_to_clip * Position;\n"
+			"	gl_Position = object_to_clip * mv * Position;\n"
 			"	position = object_to_light * Position;\n"
 			"	normal = normal_to_light * Normal;\n"
 			"	color = Color;\n"
@@ -84,10 +87,14 @@ Game::Game() {
 			std::cerr << "Info log: " << std::string(info_log.begin(), info_log.begin() + length);
 			throw std::runtime_error("failed to link program");
 		}
+
+//		glEnable(GL_DEPTH_CLAMP);
+//        glDisable( GL_CLIP_PLANE0, );
 	}
 
 	{ //read back uniform and attribute locations from the shader program:
 		simple_shading.object_to_clip_mat4 = glGetUniformLocation(simple_shading.program, "object_to_clip");
+		simple_shading.mv_mat4 = glGetUniformLocation(simple_shading.program, "mv");
 		simple_shading.object_to_light_mat4x3 = glGetUniformLocation(simple_shading.program, "object_to_light");
 		simple_shading.normal_to_light_mat3 = glGetUniformLocation(simple_shading.program, "normal_to_light");
 
@@ -174,13 +181,6 @@ Game::Game() {
 			return f->second;
 		};
 
-		// TODO
-//		tile_mesh = lookup("Tile");
-//		cursor_mesh = lookup("Cursor");
-//		doll_mesh = lookup("Doll");
-//		egg_mesh = lookup("Egg");
-//		cube_mesh = lookup("Cube");
-
 		avatar_mesh = lookup("Avatar");
 		peanut_mesh = lookup("Peanut");
 		bread_mesh = lookup("Bread");
@@ -211,21 +211,15 @@ Game::Game() {
 
 	GL_ERRORS();
 
-	// TODO
-	//----------------
-	//set up game board with meshes and rolls:
-	board_meshes.reserve(board_size.x * board_size.y);
-	board_rotations.reserve(board_size.x * board_size.y);
-	std::mt19937 mt(0xbead1234);
+    top.is_column = 0; top.is_end = 0;
+    bottom.is_column = 0; bottom.is_end = 1;
+    left.is_column = 1; left.is_end = 0;
+    right.is_column = 1; right.is_end = 1;
 
-//	std::vector< Mesh const * > meshes{ &doll_mesh, &egg_mesh, &cube_mesh };
-	std::vector< Mesh const * > meshes{ &avatar_mesh, &peanut_mesh, &bread_mesh, &jelly_mesh, &counter_mesh, &serve_mesh};
+	edges = { &top, &bottom, &left, &right };
+	key_meshes = { &peanut_mesh, &bread_mesh, &jelly_mesh, &serve_mesh };
 
-	// Pick random meshes with default rotations
-	for (uint32_t i = 0; i < board_size.x * board_size.y; ++i) {
-		board_meshes.emplace_back(meshes[mt()%meshes.size()]);
-		board_rotations.emplace_back(glm::quat());
-	}
+	generate_level();
 }
 
 Game::~Game() {
@@ -241,6 +235,42 @@ Game::~Game() {
 	GL_ERRORS();
 }
 
+void Game::generate_level() {
+//	//set up game board with meshes and rolls:
+//	board_meshes.reserve(board_size.x * board_size.y);
+//	board_rotations.reserve(board_size.x * board_size.y);
+//	std::mt19937 mt(0xbead1234);
+//
+//	// Pick random meshes with default rotations
+//	for (uint32_t i = 0; i < board_size.x * board_size.y; ++i) {
+//		board_meshes.emplace_back(key_meshes[mt()%key_meshes.size()]);
+//		board_rotations.emplace_back(glm::quat());
+//	}
+
+	std::set< const Edge *> remaining_edges = edges;
+
+	// Randomly place key counters on edges
+	for (uint32_t i = 0; i < 4; ++i) {
+		const Edge *edge = *std::next(remaining_edges.begin(), rand()%remaining_edges.size());
+
+		uint32_t max = board_size[!(edge->is_column)];
+		uint32_t placement = 1 + rand() % (max-2);
+		uint32_t increment = edge->is_column ? board_size.x : 1;
+		uint32_t start = edge->is_end * (edge->is_column ? board_size.x-1 : board_size.x*(board_size.y-1));
+
+		uint32_t index = start + placement * increment;
+		uint32_t x = index / board_size.x;
+		uint32_t y = index % board_size.x;
+		assert(x == 0 || x == board_size.x-1 || y == 0 || y == board_size.y-1);
+
+		glm::uvec3 location = glm::uvec3(x, y, 0.0f);
+		glm::uvec3 *itr = (glm::uvec3 *)(&key_locations);
+		*(itr+i) = location;
+
+		remaining_edges.erase(edge);
+	}
+}
+
 // TODO
 bool Game::handle_event(SDL_Event const &evt, glm::uvec2 window_size) {
 	//ignore any keys that are the result of automatic key repeat:
@@ -250,80 +280,88 @@ bool Game::handle_event(SDL_Event const &evt, glm::uvec2 window_size) {
 	//handle tracking the state of WSAD for roll control:
 	if (evt.type == SDL_KEYDOWN || evt.type == SDL_KEYUP) {	// Press/release keys
 		if (evt.key.keysym.scancode == SDL_SCANCODE_W) {
-			controls.roll_up = (evt.type == SDL_KEYDOWN);
+			controls.go_up = (evt.type == SDL_KEYDOWN);
 			return true;
 		} else if (evt.key.keysym.scancode == SDL_SCANCODE_S) {
-			controls.roll_down = (evt.type == SDL_KEYDOWN);
+			controls.go_down = (evt.type == SDL_KEYDOWN);
 			return true;
 		} else if (evt.key.keysym.scancode == SDL_SCANCODE_A) {
-			controls.roll_left = (evt.type == SDL_KEYDOWN);
+			controls.go_left = (evt.type == SDL_KEYDOWN);
 			return true;
 		} else if (evt.key.keysym.scancode == SDL_SCANCODE_D) {
-			controls.roll_right = (evt.type == SDL_KEYDOWN);
+			controls.go_right = (evt.type == SDL_KEYDOWN);
 			return true;
 		}
-	}
-	//move cursor on L/R/U/D press:
-//	if (evt.type == SDL_KEYDOWN && evt.key.repeat == 0) {
-//		if (evt.key.keysym.scancode == SDL_SCANCODE_LEFT) {
-//			if (cursor.x > 0) {
-//				cursor.x -= 1;
-//			}
-//			return true;
-//		} else if (evt.key.keysym.scancode == SDL_SCANCODE_RIGHT) {
-//			if (cursor.x + 1 < board_size.x) {
-//				cursor.x += 1;
-//			}
-//			return true;
-//		} else if (evt.key.keysym.scancode == SDL_SCANCODE_UP) {
-//			if (cursor.y + 1 < board_size.y) {
-//				cursor.y += 1;
-//			}
-//			return true;
-//		} else if (evt.key.keysym.scancode == SDL_SCANCODE_DOWN) {
-//			if (cursor.y > 0) {
-//				cursor.y -= 1;
-//			}
-//			return true;
+//		else if (evt.key.keysym.scancode == SDL_SCANCODE_SPACE) {
+//		    try_pickup();
 //		}
-//	}
+	}
+
 	return false;
 }
 
 void Game::update(float elapsed) {
 	//if the roll keys are pressed, rotate everything on the same row or column as the cursor:
-	glm::quat dr = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-	float amt = elapsed * 1.0f;
-	if (controls.roll_left) {
-		dr = glm::angleAxis(amt, glm::vec3(0.0f, 1.0f, 0.0f)) * dr;
-	}
-	if (controls.roll_right) {
-		dr = glm::angleAxis(-amt, glm::vec3(0.0f, 1.0f, 0.0f)) * dr;
-	}
-	if (controls.roll_up) {
-		dr = glm::angleAxis(amt, glm::vec3(1.0f, 0.0f, 0.0f)) * dr;
-	}
-	if (controls.roll_down) {
-		dr = glm::angleAxis(-amt, glm::vec3(1.0f, 0.0f, 0.0f)) * dr;
-	}
-	if (dr != glm::quat()) {
-//		for (uint32_t x = 0; x < board_size.x; ++x) {
-//			glm::quat &r = board_rotations[cursor.y * board_size.x + x];
-//			r = glm::normalize(dr * r);
-//		}
+//	glm::quat dr = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+//	float amt = elapsed * 1.0f;
+//	if (controls.roll_left) {
+//		dr = glm::angleAxis(amt, glm::vec3(0.0f, 1.0f, 0.0f)) * dr;
+//	}
+//	if (controls.roll_right) {
+//		dr = glm::angleAxis(-amt, glm::vec3(0.0f, 1.0f, 0.0f)) * dr;
+//	}
+//	if (controls.roll_up) {
+//		dr = glm::angleAxis(amt, glm::vec3(1.0f, 0.0f, 0.0f)) * dr;
+//	}
+//	if (controls.roll_down) {
+//		dr = glm::angleAxis(-amt, glm::vec3(1.0f, 0.0f, 0.0f)) * dr;
+//	}
+//	if (dr != glm::quat()) {
 //		for (uint32_t y = 0; y < board_size.y; ++y) {
-//			if (y != cursor.y) {
-//				glm::quat &r = board_rotations[y * board_size.x + cursor.x];
+//			for (uint32_t x = 0; x < board_size.x; ++x) {
+//				glm::quat &r = board_rotations[y * board_size.x + x];
 //				r = glm::normalize(dr * r);
 //			}
 //		}
+//	}
 
-		for (uint32_t y = 0; y < board_size.y; ++y) {
-			for (uint32_t x = 0; x < board_size.x; ++x) {
-				glm::quat &r = board_rotations[y * board_size.x + x];
-				r = glm::normalize(dr * r);
-			}
-		}
+    // NOTE: Based on discussion from http://www.opengl-tutorial.org/intermediate-tutorials/tutorial-17-quaternions/
+    // Default orientation is (1,0,0);
+	if (controls.go_left) {
+		x_velocity -= elapsed * acceleration;
+		avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(180.0f)));
+	}
+	if (controls.go_right) {
+		x_velocity += elapsed * acceleration;
+        avatar_rotation = glm::quat();
+	}
+	if (controls.go_up) {
+		y_velocity += elapsed * acceleration;
+		avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(90.0f)));
+	}
+	if (controls.go_down) {
+        y_velocity -= elapsed * acceleration;
+        avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(-90.0f)));
+    }
+
+    //TODO: Add deceleration/friction
+    if (!controls.go_left && !controls.go_right) {
+        x_velocity = 0.0f;
+    }
+    if (!controls.go_up && !controls.go_down) {
+        y_velocity = 0.0f;
+    }
+
+    x_velocity = glm::clamp(x_velocity, -max_velocity, max_velocity);
+    y_velocity = glm::clamp(y_velocity, -max_velocity, max_velocity);
+    glm::vec3 mv = x_velocity * glm::vec3(1.0f, 0.0f, 0.0f) + y_velocity  * glm::vec3(0.0f, 1.0f, 0.0f);
+
+	if (mv != glm::vec3(0.0f, 0.0f, 0.0f)) {
+		avatar_location += mv;
+		avatar_location.x = std::max(1.0f, avatar_location.x);
+		avatar_location.x = std::min(board_size.x-2.0f, avatar_location.x);
+		avatar_location.y = std::max(1.0f, avatar_location.y);
+		avatar_location.y = std::min(board_size.y-2.0f, avatar_location.y);
 	}
 }
 
@@ -333,20 +371,34 @@ void Game::draw(glm::uvec2 drawable_size) {
 	{
 		float aspect = float(drawable_size.x) / float(drawable_size.y);
 
-		//want scale such that board * scale fits in [-aspect,aspect]x[-1.0,1.0] screen box:
+		//want scale such that board * scale fits in [-aspect,aspect]x[-1.0,1.0] screen box with some leeway for shear:
 		float scale = glm::min(
-			2.0f * aspect / float(board_size.x),
-			2.0f / float(board_size.y)
+			1.75f * aspect / float(board_size.x),
+			1.75f / float(board_size.y)
 		);
 
 		//center of board will be placed at center of screen:
 		glm::vec2 center = 0.5f * glm::vec2(board_size);
 
+		//orthogonal sheared view
+        glm::mat4 shear_z = glm::mat4(
+                1.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 1.0f, 0.0f, 0.0f,
+                0.5f, -0.75f, 1.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f
+        );
+//		glm::mat4 shear_y = glm::mat4(
+//				1.0f, 0.0f, 0.0f, 0.0f,
+//				0.5f, 1.0f, 0.0f, 0.0f,
+//				0.0f, 0.0f, 1.0f, 0.0f,
+//				0.0f, 0.0f, 0.0f, 1.0f
+//		);
+
 		//NOTE: glm matrices are specified in column-major order
-		world_to_clip = glm::mat4(
+		world_to_clip = /*shear_y */ shear_z * glm::mat4(
 			scale / aspect, 0.0f, 0.0f, 0.0f,
 			0.0f, scale, 0.0f, 0.0f,
-			0.0f, 0.0f,-1.0f, 0.0f,
+			0.0f, 0.0f,-0.25f, 0.0f,
 			-(scale / aspect) * center.x, -scale * center.y, 0.0f, 1.0f
 		);
 	}
@@ -356,7 +408,7 @@ void Game::draw(glm::uvec2 drawable_size) {
 	glUseProgram(simple_shading.program);
 
 	glUniform3fv(simple_shading.sun_color_vec3, 1, glm::value_ptr(glm::vec3(0.81f, 0.81f, 0.76f)));
-	glUniform3fv(simple_shading.sun_direction_vec3, 1, glm::value_ptr(glm::normalize(glm::vec3(-0.2f, 0.2f, 1.0f))));
+	glUniform3fv(simple_shading.sun_direction_vec3, 1, glm::value_ptr(glm::normalize(glm::vec3(0.2f, -0.2f, 1.0f))));
 	glUniform3fv(simple_shading.sky_color_vec3, 1, glm::value_ptr(glm::vec3(0.2f, 0.2f, 0.3f)));
 	glUniform3fv(simple_shading.sky_direction_vec3, 1, glm::value_ptr(glm::vec3(0.0f, 1.0f, 0.0f)));
 
@@ -375,47 +427,53 @@ void Game::draw(glm::uvec2 drawable_size) {
 			glm::mat3 normal_to_world = glm::inverse(glm::transpose(glm::mat3(object_to_world)));
 			glUniformMatrix3fv(simple_shading.normal_to_light_mat3, 1, GL_FALSE, glm::value_ptr(normal_to_world));
 		}
+        if (simple_shading.mv_mat4 != -1U) {
+        	glm::mat4 mv_mat4 = projection * view * model;
+            glUniformMatrix4fv(simple_shading.mv_mat4, 1, GL_FALSE, glm::value_ptr(mv_mat4));
+        }
 
 		//draw the mesh:
 		glDrawArrays(GL_TRIANGLES, mesh.first, mesh.count);
 	};
 
-	glm::mat4 mesh_scale = glm::mat4(
-			0.5f, 0.0f, 0.0f, 0.0f,
-			0.0f, 0.5f, 0.0f, 0.0f,
-			0.0f, 0.0f, 0.5f, 0.0f,
-			0.0f, 0.0f, 0.0f, 1.0f
-			);
+	for (uint32_t i = 0; i < board_size.x * board_size.y; ++i) {
+		uint32_t x = i / board_size.x;
+		uint32_t y = i % board_size.y;
+		draw_mesh(tile_mesh, location_v3m4(glm::vec3(x, y, -0.5f), glm::quat()));
 
-	// TODO
-	for (uint32_t y = 0; y < board_size.y; ++y) {
-		for (uint32_t x = 0; x < board_size.x; ++x) {
-			draw_mesh(tile_mesh,
-				glm::mat4(
-					1.0f, 0.0f, 0.0f, 0.0f,
-					0.0f, 1.0f, 0.0f, 0.0f,
-					0.0f, 0.0f, 1.0f, 0.0f,
-					x+0.5f, y+0.5f,-0.5f, 1.0f
-				) * mesh_scale
-			);
-			draw_mesh(*board_meshes[y*board_size.x+x],
-				glm::mat4(
-					1.0f, 0.0f, 0.0f, 0.0f,
-					0.0f, 1.0f, 0.0f, 0.0f,
-					0.0f, 0.0f, 1.0f, 0.0f,
-					x+0.5f, y+0.5f, 0.0f, 1.0f
-				)
-				* glm::mat4_cast(board_rotations[y*board_size.x+x]) * mesh_scale
-			);
+		if (on_edge(x,y) && not_occupied(x,y)) {
+			draw_mesh(counter_mesh, location_v3m4(glm::vec3(x,y,0.0f), glm::quat()));
 		}
 	}
+	draw_mesh(avatar_mesh, location_v3m4(avatar_location, avatar_rotation));
+	draw_mesh(peanut_mesh, location_v3m4(key_locations.peanut, glm::quat()));
+	draw_mesh(bread_mesh, location_v3m4(key_locations.bread, glm::quat()));
+	draw_mesh(jelly_mesh, location_v3m4(key_locations.jelly, glm::quat()));
+	draw_mesh(serve_mesh, location_v3m4(key_locations.serve, glm::quat()));
 
 	glUseProgram(0);
 
 	GL_ERRORS();
 }
 
+bool Game::on_edge(uint32_t x, uint32_t y) {
+	return x == 0 || x == board_size.x-1 || y == 0 || y == board_size.y-1;
+}
 
+bool Game::not_occupied(uint32_t x, uint32_t y) {
+	glm::uvec3 compare = glm::uvec3(x,y,0);
+	return compare != key_locations.peanut && compare != key_locations.bread &&
+		   compare != key_locations.jelly && compare != key_locations.serve;
+}
+
+static glm::mat4 location_v3m4(glm::vec3 v, glm::quat r) {
+	return 	glm::mat4(
+			1.0f, 0.0f, 0.0f, 0.0f,
+			0.0f, 1.0f, 0.0f, 0.0f,
+			0.0f, 0.0f, 1.0f, 0.0f,
+			v.x+0.5f, v.y+0.5f, v.z, 1.0f
+	) * glm::mat4_cast(r);
+}
 
 //create and return an OpenGL vertex shader from source:
 static GLuint compile_shader(GLenum type, std::string const &source) {
