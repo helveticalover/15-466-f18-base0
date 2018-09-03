@@ -5,6 +5,7 @@
 #include "data_path.hpp" //helper to get paths relative to executable
 
 #include <glm/gtc/type_ptr.hpp>
+#include <SDL_audio.h>
 
 #include <iostream>
 #include <fstream>
@@ -13,10 +14,16 @@
 #include <cstddef>
 #include <random>
 
+#define BUFFER_SIZE 512
+
 //helper defined later; throws if shader compilation fails:
 static glm::mat4 location_v3m4(glm::vec3 v, glm::quat r);
 static GLuint compile_shader(GLenum type, std::string const &source);
-static bool adjacent(glm::uvec3 locationA, glm::uvec3 locationB);
+static bool adjacent(glm::uvec3 locationA, glm::uvec3 locationB, float distance);
+static void audio_callback(void *userdata, Uint8 *stream, int len);
+
+uint8_t *current_audio_pos;
+uint32_t current_audio_len;
 
 Game::Game() {
 	{ //create an opengl program to perform sun/sky (well, directional+hemispherical) lighting:
@@ -89,6 +96,49 @@ Game::Game() {
 			throw std::runtime_error("failed to link program");
 		}
 	}
+
+	// Set up sound
+	// NOTE: based on code from https://gist.github.com/armornick/3447121
+	// Sounds from https://freesound.org/people/morgantj/sounds/58634/
+    {
+    	d0.wav_buffer = new uint8_t [BUFFER_SIZE];
+		re.wav_buffer = new uint8_t [BUFFER_SIZE];
+		mi.wav_buffer = new uint8_t [BUFFER_SIZE];
+		fa.wav_buffer = new uint8_t [BUFFER_SIZE];
+		so.wav_buffer = new uint8_t [BUFFER_SIZE];
+
+        if (SDL_Init(SDL_INIT_AUDIO) < 0) {
+			throw std::runtime_error("failed to init audio");
+        }
+
+        if( SDL_LoadWAV("do.wav", &d0.wav_spec, &d0.wav_buffer, &d0.wav_length) == NULL ){
+			throw std::runtime_error("failed to load audio");
+        }
+		if( SDL_LoadWAV("re.wav", &re.wav_spec, &re.wav_buffer, &re.wav_length) == NULL ){
+			throw std::runtime_error("failed to load audio");
+		}
+		if( SDL_LoadWAV("mi.wav", &mi.wav_spec, &mi.wav_buffer, &mi.wav_length) == NULL ){
+			throw std::runtime_error("failed to load audio");
+		}
+		if( SDL_LoadWAV("fa.wav", &fa.wav_spec, &d0.wav_buffer, &fa.wav_length) == NULL ){
+			throw std::runtime_error("failed to load audio");
+		}
+		if( SDL_LoadWAV("so.wav", &so.wav_spec, &so.wav_buffer, &so.wav_length) == NULL ){
+			throw std::runtime_error("failed to load audio");
+		}
+
+        d0.wav_spec.callback = audio_callback;
+		re.wav_spec.callback = audio_callback;
+		mi.wav_spec.callback = audio_callback;
+		fa.wav_spec.callback = audio_callback;
+		so.wav_spec.callback = audio_callback;
+
+        d0.wav_spec.userdata = NULL;
+		re.wav_spec.userdata = NULL;
+		mi.wav_spec.userdata = NULL;
+		fa.wav_spec.userdata = NULL;
+		so.wav_spec.userdata = NULL;
+    }
 
 	{ //read back uniform and attribute locations from the shader program:
 		simple_shading.object_to_clip_mat4 = glGetUniformLocation(simple_shading.program, "object_to_clip");
@@ -182,10 +232,10 @@ Game::Game() {
 		avatar_mesh = lookup("Avatar");
 		counter_mesh = lookup("Counter");
 		tile_mesh = lookup("Tile");
-		peanut_mesh = lookup("Peanut");
-		bread_mesh = lookup("Bread");
-		jelly_mesh = lookup("Jelly");
-		serve_mesh = lookup("Serve");
+		peanut_mesh = lookup("Peanut"); peanut_gray = lookup("Peanut_Gray");
+		bread_mesh = lookup("Bread"); bread_gray = lookup("Bread_Gray");
+		jelly_mesh = lookup("Jelly"); jelly_gray = lookup("Jelly_Gray");
+		serve_mesh = lookup("Serve"); serve_gray = lookup("Serve_Gray");
 
 		key_counters = {&peanut, &bread, &jelly, &serve};
 	};
@@ -252,7 +302,7 @@ void Game::generate_level() {
 		glm::uvec3 location = glm::uvec3(x, y, 0.0f);
 
         // Make sure counter doesn't spawn near avatar
-        while (adjacent(location, avatar_location)) {
+        while (adjacent(location, avatar_location, 2.0f)) {
             placement = 1 + (placement + 1) % (max - 2);
             uint32_t index = start + placement * increment;
             uint32_t x = index / board_size.x;
@@ -296,13 +346,6 @@ bool Game::handle_event(SDL_Event const &evt, glm::uvec2 window_size) {
 		}
   	}
 
-  	// Testing
-//  	if (evt.type == SDL_KEYDOWN && evt.key.repeat == 0) {
-//  	    if (evt.key.keysym.scancode == SDL_SCANCODE_SPACE) {
-//  	        generate_level();
-//  	    }
-//  	}
-
     //----------------- Grid-based movement ------------------
 //    if (evt.type == SDL_KEYDOWN && evt.key.repeat == 0) {
 //        if (evt.key.keysym.scancode == SDL_SCANCODE_A) {
@@ -332,7 +375,7 @@ bool Game::handle_event(SDL_Event const &evt, glm::uvec2 window_size) {
 
 void Game::update(float elapsed) {
 
-    // --------------- Pickup -------------------------------
+    // --------------- Progress -------------------------------
     {
         auto touching_counter = [&](CounterInfo *counter, glm::uvec3 compare_location) -> bool {
 			float x_lo = counter->location.x - 1.0f;
@@ -347,17 +390,53 @@ void Game::update(float elapsed) {
 			return false;
         };
 
-        if (touching_counter(&peanut, avatar_location)) {
-        	progress.peanut_pickup = true;
+		if (touching_counter(&bread, avatar_location) && next_pickup == 0) {
+		    SDL_CloseAudio();
+            current_audio_pos = fa.wav_buffer;
+            current_audio_len = fa.wav_length;
+		    if ( SDL_OpenAudio(&fa.wav_spec, NULL) >= 0 ) {
+                SDL_PauseAudio(0);
+            }
+			progress.breadA = true;
+			++next_pickup;
+		}
+        if (touching_counter(&peanut, avatar_location) && next_pickup == 1) {
+            SDL_CloseAudio();
+            current_audio_pos = re.wav_buffer;
+            current_audio_len = re.wav_length;
+            if ( SDL_OpenAudio(&re.wav_spec, NULL) >= 0 ) {
+                SDL_PauseAudio(0);
+            }
+        	progress.peanut = true;
+        	++next_pickup;
         }
-        if (touching_counter(&bread, avatar_location)) {
-        	progress.bread_pickup = true;
+        if (touching_counter(&jelly, avatar_location) && next_pickup == 2) {
+            SDL_CloseAudio();
+            current_audio_pos = mi.wav_buffer;
+            current_audio_len = mi.wav_length;
+            if ( SDL_OpenAudio(&mi.wav_spec, NULL) >= 0 ) {
+                SDL_PauseAudio(0);
+            }
+        	progress.jelly = true;
+        	++next_pickup;
         }
-        if (touching_counter(&jelly, avatar_location)) {
-        	progress.jelly_pickup = true;
-        }
-        if (touching_counter(&serve, avatar_location) && progress.peanut_pickup &&
-        	progress.bread_pickup && progress.jelly_pickup) {
+		if (touching_counter(&bread, avatar_location) && next_pickup == 3) {
+            SDL_CloseAudio();
+            current_audio_pos = d0.wav_buffer;
+            current_audio_len = d0.wav_length;
+            if ( SDL_OpenAudio(&d0.wav_spec, NULL) >= 0 ) {
+                SDL_PauseAudio(0);
+            }
+			progress.breadB = true;
+			++next_pickup;
+		}
+        if (touching_counter(&serve, avatar_location) && next_pickup == 4) {
+            SDL_CloseAudio();
+            current_audio_pos = so.wav_buffer;
+            current_audio_len = so.wav_length;
+            if ( SDL_OpenAudio(&so.wav_spec, NULL) >= 0 ) {
+                SDL_PauseAudio(0);
+            }
         	++levels_passed;
         	if (levels_passed == 5) {
         	    // TODO: level progression
@@ -365,9 +444,11 @@ void Game::update(float elapsed) {
 //        	    board_size.y += 2;
 //        	    levels_passed = 0;
         	}
-        	progress.peanut_pickup = false;
-        	progress.bread_pickup = false;
-        	progress.jelly_pickup = false;
+        	next_pickup = 0;
+			progress.breadA = false;
+        	progress.peanut = false;
+        	progress.jelly = false;
+			progress.breadB = false;
         	generate_level();
         }
     }
@@ -381,13 +462,13 @@ void Game::update(float elapsed) {
             x_velocity -= elapsed * acceleration;
             avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(180.0f)));
         }
-        if (controls.go_right) {
-            x_velocity += elapsed * acceleration;
-            avatar_rotation = glm::quat();
-        }
         if (controls.go_up) {
             y_velocity += elapsed * acceleration;
             avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(90.0f)));
+        }
+        if (controls.go_right) {
+            x_velocity += elapsed * acceleration;
+            avatar_rotation = glm::quat();
         }
         if (controls.go_down) {
             y_velocity -= elapsed * acceleration;
@@ -504,17 +585,28 @@ void Game::draw(glm::uvec2 drawable_size) {
 			draw_mesh(counter_mesh, location_v3m4(glm::vec3(x,y,0.0f), glm::quat()));
 		}
 	}
-	draw_mesh(avatar_mesh, location_v3m4(avatar_location, avatar_rotation));
-	draw_mesh(serve_mesh, location_v3m4(serve.location, serve.rotation));
 
-	if (!progress.peanut_pickup) {
-		draw_mesh(peanut_mesh, location_v3m4(peanut.location, peanut.rotation));
-	}
-	if (!progress.bread_pickup) {
+	draw_mesh(avatar_mesh, location_v3m4(avatar_location, avatar_rotation));
+
+	if (next_pickup == 0 || next_pickup == 3) {
 		draw_mesh(bread_mesh, location_v3m4(bread.location, bread.rotation));
+	} else {
+		draw_mesh(bread_gray, location_v3m4(bread.location, bread.rotation));
 	}
-	if (!progress.jelly_pickup) {
+	if (next_pickup == 1) {
+		draw_mesh(peanut_mesh, location_v3m4(peanut.location, peanut.rotation));
+	} else {
+		draw_mesh(peanut_gray, location_v3m4(peanut.location, peanut.rotation));
+	}
+	if (next_pickup == 2) {
 		draw_mesh(jelly_mesh, location_v3m4(jelly.location, jelly.rotation));
+	} else {
+		draw_mesh(jelly_gray, location_v3m4(jelly.location, jelly.rotation));
+	}
+	if (next_pickup == 4) {
+		draw_mesh(serve_mesh, location_v3m4(serve.location, serve.rotation));
+	} else {
+		draw_mesh(serve_gray, location_v3m4(serve.location, serve.rotation));
 	}
 
 	glUseProgram(0);
@@ -531,17 +623,30 @@ static glm::mat4 location_v3m4(glm::vec3 v, glm::quat r) {
 	) * glm::mat4_cast(r);
 }
 
-static bool adjacent(glm::uvec3 locationA, glm::uvec3 locationB) {
-    float x_lo = locationA.x - 2.0f;
-    float x_hi = locationA.x + 2.0f;
-    float y_lo = locationA.y - 2.0f;
-    float y_hi = locationA.y + 2.0f;
+static bool adjacent(glm::uvec3 locationA, glm::uvec3 locationB, float distance) {
+    float x_lo = locationA.x - distance;
+    float x_hi = locationA.x + distance;
+    float y_lo = locationA.y - distance;
+    float y_hi = locationA.y + distance;
 
     if ((locationB.x >= x_lo && locationB.x <= x_hi) &&
         (locationB.y >= y_lo && locationB.y <= y_hi)) {
         return true;
     }
     return false;
+}
+
+// NOTE: based on code from https://gist.github.com/armornick/3447121
+static void audio_callback(void *userdata, Uint8 *stream, int len) {
+	if (current_audio_len == 0) {
+		return;
+	}
+
+	len = ( len > (int)current_audio_len ? current_audio_len : len );
+	SDL_memcpy (stream, current_audio_pos, len);
+
+	current_audio_pos += len;
+	current_audio_len -= len;
 }
 
 //create and return an OpenGL vertex shader from source:

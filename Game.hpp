@@ -68,10 +68,10 @@ struct Game {
     Mesh avatar_mesh;
     Mesh counter_mesh;
     Mesh tile_mesh;
-    Mesh peanut_mesh;
-    Mesh bread_mesh;
-    Mesh jelly_mesh;
-    Mesh serve_mesh;
+    Mesh peanut_mesh; Mesh peanut_gray;
+    Mesh bread_mesh; Mesh bread_gray;
+    Mesh jelly_mesh; Mesh jelly_gray;
+    Mesh serve_mesh; Mesh serve_gray;
 
 	GLuint meshes_for_simple_shading_vao = -1U; //vertex array object that describes how to connect the meshes_vbo to the simple_shading_program
 
@@ -81,6 +81,20 @@ struct Game {
     glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f));
     glm::mat4 projection = glm::mat4(1.0f);
 
+    //------- sound ------------
+    // NOTE: Based on code from https://gist.github.com/armornick/3447121
+    struct Sound {
+        uint32_t wav_length;
+        uint8_t *wav_buffer;
+        SDL_AudioSpec wav_spec;
+    };
+
+    Sound d0;
+    Sound re;
+    Sound mi;
+    Sound fa;
+    Sound so;
+
 	//------- game state -------
 
 	glm::uvec2 board_size = glm::uvec2(9,9);
@@ -88,7 +102,7 @@ struct Game {
 	// NOTE: Based on discussion from http://www.cplusplus.com/forum/general/29835/
 	glm::vec3 avatar_location = glm::vec3(4,4,0);
 	glm::quat avatar_rotation = glm::quat();
-	const float max_velocity = 0.25f;
+	const float max_velocity = 0.15f;
     const float acceleration = 0.5f; // tiles per sec^2
 	float x_velocity = 0.0f; // tiles per second
     float y_velocity = 0.0f;
@@ -117,10 +131,13 @@ struct Game {
     std::vector<CounterInfo *>key_counters;
 
 	struct {
-		bool peanut_pickup = false;
-		bool bread_pickup = false;
-		bool jelly_pickup = false;
+        bool breadA = false;
+		bool peanut = false;
+		bool jelly = false;
+		bool breadB = false;
 	} progress;
+
+	uint8_t next_pickup = 0;
 
 	struct {
 		float go_left = false;
