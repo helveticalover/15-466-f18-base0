@@ -514,7 +514,7 @@ void Game::draw(glm::uvec2 drawable_size) {
 	glUseProgram(simple_shading.program);
 
 	glUniform3fv(simple_shading.sun_color_vec3, 1, glm::value_ptr(glm::vec3(0.81f, 0.81f, 0.76f)));
-	glUniform3fv(simple_shading.sun_direction_vec3, 1, glm::value_ptr(glm::normalize(glm::vec3(0.2f, -0.2f, 1.0f))));
+	glUniform3fv(simple_shading.sun_direction_vec3, 1, glm::value_ptr(glm::normalize(glm::vec3(0.4f, -0.4f, 1.0f))));
 	glUniform3fv(simple_shading.sky_color_vec3, 1, glm::value_ptr(glm::vec3(0.2f, 0.2f, 0.3f)));
 	glUniform3fv(simple_shading.sky_direction_vec3, 1, glm::value_ptr(glm::vec3(0.0f, 1.0f, 0.0f)));
 
@@ -522,7 +522,7 @@ void Game::draw(glm::uvec2 drawable_size) {
 	auto draw_mesh = [&](Mesh const &mesh, glm::mat4 const &object_to_world) {
 		//set up the matrix uniforms:
 		if (simple_shading.object_to_clip_mat4 != -1U) {
-			glm::mat4 object_to_clip = shear_z * scale_z * world_to_clip * object_to_world;
+			glm::mat4 object_to_clip = world_to_clip * shear_z * scale_z * object_to_world;
 			glUniformMatrix4fv(simple_shading.object_to_clip_mat4, 1, GL_FALSE, glm::value_ptr(object_to_clip));
 		}
 		if (simple_shading.object_to_light_mat4x3 != -1U) {

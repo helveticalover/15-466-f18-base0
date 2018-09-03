@@ -80,7 +80,7 @@ struct Game {
     glm::mat4 shear_z = glm::mat4(
             1.0f, 0.0f, 0.0f, 0.0f,
             0.0f, 1.0f, 0.0f, 0.0f,
-            0.5f, -0.75f, 1.0f, 0.0f,
+            -2.0f, 3.0f, 1.0f, 0.0f,
             0.0f, 0.0f, 0.0f, 1.0f
     );
 

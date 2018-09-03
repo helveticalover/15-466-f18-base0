@@ -13,16 +13,17 @@ Screen Shot:
 
 Difficulties Encountered:
 
-TODO: write several sentences about any difficulties you may have encountered in creating the game.
+1. Audio - Strange bugs occur during loading and playing audio assets through SDL. Two files ("do.WAV" and "so.WAV") seem to switch during loading, and the second of these two to load plays with some noise in the beginning.
 
-1. Audio
-2. Transformations
+2. Transformations - I struggled to understanding matrix transformations in drawing meshes, particularly where I needed to apply them and the order to apply them. In general, I had difficulty using OpenGL.
+
+3. Level generation - I tried to ensure key items are placed logically (i.e. some distance away from each other and the player), but my algorithms to do so can be improved.
 
 Good Code:
 
-TODO: write a sentence or two about any code you think you did particularly well.
-1. Level progression
-2. Messaging
+1. Level progression - I structured my code support arbitrary sequences and arbitrary sequence lengths in each level.
+
+2. Feel - A lot of effort went into the feel and responsiveness of the game. Character movement is smooth and affected by acceleration/deceleration. Colors, sounds and text contribute to game messaging.
 
 Attributions:
 
