@@ -4,8 +4,8 @@
 
 #include <SDL.h>
 #include <glm/glm.hpp>
-#include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <vector>
 #include <set>
@@ -18,9 +18,6 @@ struct Game {
 	//constructor and frees them in its destructor.
 	Game();
 	~Game();
-
-	//randomizes board
-    void generate_level();
 
 	//handle_event is called when new mouse or keyboard events are received:
 	// (note that this might be many times per frame or never)
@@ -41,7 +38,7 @@ struct Game {
 
 		//uniform locations:
 		GLuint object_to_clip_mat4 = -1U;
-        GLuint mv_mat4 = -1U;
+        GLuint model_scale_mat4 = -1U;
 		GLuint object_to_light_mat4x3 = -1U;
 		GLuint normal_to_light_mat3 = -1U;
 		GLuint sun_direction_vec3 = -1U;
@@ -75,14 +72,23 @@ struct Game {
 
 	GLuint meshes_for_simple_shading_vao = -1U; //vertex array object that describes how to connect the meshes_vbo to the simple_shading_program
 
-	// transformations
+	//---- transformations -----
 	// NOTE: Based on discussion from https://solarianprogrammer.com/2013/05/22/opengl-101-matrices-projection-view-model/
     glm::mat4 model = glm::scale(glm::mat4(1.0f), glm::vec3(0.5f, 0.5f, 0.5f));
-    glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f));
-    glm::mat4 projection = glm::mat4(1.0f);
+
+    //orthogonal sheared view
+    glm::mat4 shear_z = glm::mat4(
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.5f, -0.75f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
+    );
+
+    glm::mat4 scale_z = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f, 1.0f, 0.25f));
 
     //------- sound ------------
     // NOTE: Based on code from https://gist.github.com/armornick/3447121
+
     struct Sound {
         uint32_t wav_length;
         uint8_t *wav_buffer;
@@ -95,56 +101,74 @@ struct Game {
     Sound fa;
     Sound so;
 
+    //------- text ------------
+
+    Mesh sandwiches_made;
+    Mesh num0;
+    Mesh num1;
+    Mesh num2;
+    Mesh num3;
+    Mesh num4;
+    Mesh num5;
+    Mesh num6;
+    Mesh num7;
+    Mesh num8;
+    Mesh num9;
+    std::vector< Mesh * > digits;
+
 	//------- game state -------
 
-	glm::uvec2 board_size = glm::uvec2(9,9);
-
+	// avatar movement
 	// NOTE: Based on discussion from http://www.cplusplus.com/forum/general/29835/
-	glm::vec3 avatar_location = glm::vec3(4,4,0);
-	glm::quat avatar_rotation = glm::quat();
 	const float max_velocity = 0.15f;
-    const float acceleration = 0.5f; // tiles per sec^2
+    const float acceleration = 0.75f;
+    const float deceleration = 0.75f;
+
+    glm::vec3 avatar_location = glm::vec3(4,4,0);
+    glm::quat avatar_rotation = glm::quat();
 	float x_velocity = 0.0f; // tiles per second
     float y_velocity = 0.0f;
+
+    struct {
+        float go_left = false;
+        float go_right = false;
+        float go_up = false;
+        float go_down = false;
+    } controls;
+
+    // board info
+    glm::uvec2 board_size = glm::uvec2(9,9);
 
 	struct Edge {
 	    uint8_t is_row = 0;
 	    uint8_t is_end = 0;
 	};
-
     Edge top;
     Edge bottom;
     Edge left;
     Edge right;
-	std::set< Edge * > edges;
+	std::set<Edge *> edges;
 
 	struct CounterInfo{
+        Mesh *active;
+        Mesh *inactive;
 	    glm::uvec3 location = glm::uvec3(0,0,0);
 	    glm::quat rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(-90.0f)));
-	    Edge *edge;
 	};
-
 	CounterInfo peanut;
 	CounterInfo bread;
 	CounterInfo jelly;
 	CounterInfo serve;
-    std::vector<CounterInfo *>key_counters;
+    std::vector< CounterInfo * >key_counters;
 
-	struct {
-        bool breadA = false;
-		bool peanut = false;
-		bool jelly = false;
-		bool breadB = false;
-	} progress;
-
+    // level progression
 	uint8_t next_pickup = 0;
+	uint32_t num_sandwiches = 0;
 
-	struct {
-		float go_left = false;
-		float go_right = false;
-		float go_up = false;
-		float go_down = false;
-	} controls;
+	std::vector< Sound * > notes;
+	std::vector< CounterInfo * > level_progression;
 
-	uint32_t levels_passed = 0;
+    //------- additional functions ------------
+
+    void generate_level();  //randomizes board
 };

@@ -83,7 +83,6 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	// TODO: Use this for debugging
 	//Hide mouse cursor (note: showing can be useful for debugging):
 	//SDL_ShowCursor(SDL_DISABLE);
 

@@ -5,6 +5,8 @@
 #include "data_path.hpp" //helper to get paths relative to executable
 
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <SDL_audio.h>
 
 #include <iostream>
@@ -15,11 +17,12 @@
 #include <random>
 
 #define BUFFER_SIZE 512
+#define AUDIO_VOLUME 10
 
 //helper defined later; throws if shader compilation fails:
 static glm::mat4 location_v3m4(glm::vec3 v, glm::quat r);
 static GLuint compile_shader(GLenum type, std::string const &source);
-static bool adjacent(glm::uvec3 locationA, glm::uvec3 locationB, float distance);
+static bool adjacent(glm::vec3 locationA, glm::vec3 locationB, float leeway);
 static void audio_callback(void *userdata, Uint8 *stream, int len);
 
 uint8_t *current_audio_pos;
@@ -30,7 +33,7 @@ Game::Game() {
 		GLuint vertex_shader = compile_shader(GL_VERTEX_SHADER,
 			"#version 330\n"
 			"uniform mat4 object_to_clip;\n"
-            "uniform mat4 mv;\n"
+            "uniform mat4 model_scale;\n"
 			"uniform mat4x3 object_to_light;\n"
 			"uniform mat3 normal_to_light;\n"
 			"layout(location=0) in vec4 Position;\n" //note: layout keyword used to make sure that the location-0 attribute is always bound to something
@@ -40,7 +43,7 @@ Game::Game() {
 			"out vec3 normal;\n"
 			"out vec4 color;\n"
 			"void main() {\n"
-			"	gl_Position = object_to_clip * mv * Position;\n"
+			"	gl_Position = object_to_clip * model_scale * Position;\n"
 			"	position = object_to_light * Position;\n"
 			"	normal = normal_to_light * Normal;\n"
 			"	color = Color;\n"
@@ -97,52 +100,9 @@ Game::Game() {
 		}
 	}
 
-	// Set up sound
-	// NOTE: based on code from https://gist.github.com/armornick/3447121
-	// Sounds from https://freesound.org/people/morgantj/sounds/58634/
-    {
-    	d0.wav_buffer = new uint8_t [BUFFER_SIZE];
-		re.wav_buffer = new uint8_t [BUFFER_SIZE];
-		mi.wav_buffer = new uint8_t [BUFFER_SIZE];
-		fa.wav_buffer = new uint8_t [BUFFER_SIZE];
-		so.wav_buffer = new uint8_t [BUFFER_SIZE];
-
-        if (SDL_Init(SDL_INIT_AUDIO) < 0) {
-			throw std::runtime_error("failed to init audio");
-        }
-
-        if( SDL_LoadWAV("do.wav", &d0.wav_spec, &d0.wav_buffer, &d0.wav_length) == NULL ){
-			throw std::runtime_error("failed to load audio");
-        }
-		if( SDL_LoadWAV("re.wav", &re.wav_spec, &re.wav_buffer, &re.wav_length) == NULL ){
-			throw std::runtime_error("failed to load audio");
-		}
-		if( SDL_LoadWAV("mi.wav", &mi.wav_spec, &mi.wav_buffer, &mi.wav_length) == NULL ){
-			throw std::runtime_error("failed to load audio");
-		}
-		if( SDL_LoadWAV("fa.wav", &fa.wav_spec, &d0.wav_buffer, &fa.wav_length) == NULL ){
-			throw std::runtime_error("failed to load audio");
-		}
-		if( SDL_LoadWAV("so.wav", &so.wav_spec, &so.wav_buffer, &so.wav_length) == NULL ){
-			throw std::runtime_error("failed to load audio");
-		}
-
-        d0.wav_spec.callback = audio_callback;
-		re.wav_spec.callback = audio_callback;
-		mi.wav_spec.callback = audio_callback;
-		fa.wav_spec.callback = audio_callback;
-		so.wav_spec.callback = audio_callback;
-
-        d0.wav_spec.userdata = NULL;
-		re.wav_spec.userdata = NULL;
-		mi.wav_spec.userdata = NULL;
-		fa.wav_spec.userdata = NULL;
-		so.wav_spec.userdata = NULL;
-    }
-
 	{ //read back uniform and attribute locations from the shader program:
 		simple_shading.object_to_clip_mat4 = glGetUniformLocation(simple_shading.program, "object_to_clip");
-		simple_shading.mv_mat4 = glGetUniformLocation(simple_shading.program, "mv");
+		simple_shading.model_scale_mat4 = glGetUniformLocation(simple_shading.program, "model_scale");
 		simple_shading.object_to_light_mat4x3 = glGetUniformLocation(simple_shading.program, "object_to_light");
 		simple_shading.normal_to_light_mat3 = glGetUniformLocation(simple_shading.program, "normal_to_light");
 
@@ -237,7 +197,19 @@ Game::Game() {
 		jelly_mesh = lookup("Jelly"); jelly_gray = lookup("Jelly_Gray");
 		serve_mesh = lookup("Serve"); serve_gray = lookup("Serve_Gray");
 
-		key_counters = {&peanut, &bread, &jelly, &serve};
+		//text meshes
+		sandwiches_made = lookup("sandwiches made");
+		num0 = lookup("0");
+		num1 = lookup("1");
+		num2 = lookup("2");
+		num3 = lookup("3");
+		num4 = lookup("4");
+		num5 = lookup("5");
+		num6 = lookup("6");
+		num7 = lookup("7");
+		num8 = lookup("8");
+		num9 = lookup("9");
+		digits = {&num0, &num1, &num2, &num3, &num4, &num5, &num6, &num7, &num8, &num9};
 	};
 
 	{ //create vertex array object to hold the map from the mesh vertex buffer to shader program attributes:
@@ -261,14 +233,69 @@ Game::Game() {
 
 	GL_ERRORS();
 
-    left.is_row = 0; top.is_end = 0;
-    right.is_row = 0; bottom.is_end = 1;
-    top.is_row = 1; left.is_end = 0;
-    bottom.is_row = 1; right.is_end = 1;
+	// NOTE: based on code from https://gist.github.com/armornick/3447121
+	// Sounds from https://freesound.org/people/morgantj/sounds/58634/
+	{ // Set up sound
+		d0.wav_buffer = new uint8_t [BUFFER_SIZE];
+		re.wav_buffer = new uint8_t [BUFFER_SIZE];
+		mi.wav_buffer = new uint8_t [BUFFER_SIZE];
+		fa.wav_buffer = new uint8_t [BUFFER_SIZE];
+		so.wav_buffer = new uint8_t [BUFFER_SIZE];
 
-	edges = { &top, &bottom, &left, &right };
+		if (SDL_Init(SDL_INIT_AUDIO) < 0) {
+			throw std::runtime_error("failed to init audio");
+		}
 
-	generate_level();
+		//TODO: ????????
+		if( SDL_LoadWAV("sounds/do (actually fa).wav", &d0.wav_spec, &d0.wav_buffer, &d0.wav_length) == NULL ){
+			throw std::runtime_error("failed to load audio");
+		}
+		if( SDL_LoadWAV("sounds/re.wav", &re.wav_spec, &re.wav_buffer, &re.wav_length) == NULL ){
+			throw std::runtime_error("failed to load audio");
+		}
+		if( SDL_LoadWAV("sounds/mi.wav", &mi.wav_spec, &mi.wav_buffer, &mi.wav_length) == NULL ){
+			throw std::runtime_error("failed to load audio");
+		}
+		if( SDL_LoadWAV("sounds/fa (actually do).wav", &fa.wav_spec, &d0.wav_buffer, &fa.wav_length) == NULL ){
+			throw std::runtime_error("failed to load audio");
+		}
+		if( SDL_LoadWAV("sounds/so.wav", &so.wav_spec, &so.wav_buffer, &so.wav_length) == NULL ){
+			throw std::runtime_error("failed to load audio");
+		}
+
+		d0.wav_spec.callback = audio_callback;
+		re.wav_spec.callback = audio_callback;
+		mi.wav_spec.callback = audio_callback;
+		fa.wav_spec.callback = audio_callback;
+		so.wav_spec.callback = audio_callback;
+
+		d0.wav_spec.userdata = NULL;
+		re.wav_spec.userdata = NULL;
+		mi.wav_spec.userdata = NULL;
+		fa.wav_spec.userdata = NULL;
+		so.wav_spec.userdata = NULL;
+
+		notes = {&d0, &re, &mi, &fa, &so};
+	};
+
+	{ // Set up game state and level
+		left.is_row = 0; 		left.is_end = 0;
+		top.is_end = 0;			top.is_row = 1;
+		right.is_row = 0;		right.is_end = 1;
+		bottom.is_end = 1;		bottom.is_row = 1;
+
+		edges = {&top, &bottom, &left, &right};
+
+		peanut.active = &peanut_mesh;	peanut.inactive = &peanut_gray;
+		bread.active = &bread_mesh;		bread.inactive = &bread_gray;
+		jelly.active = &jelly_mesh;		jelly.inactive = &jelly_gray;
+		serve.active = &serve_mesh;		serve.inactive = &serve_gray;
+
+		key_counters = {&peanut, &bread, &jelly, &serve};
+
+		level_progression = {&bread, &peanut, &jelly, &bread, &serve};
+		generate_level();
+	}
 }
 
 Game::~Game() {
@@ -281,10 +308,26 @@ Game::~Game() {
 	glDeleteProgram(simple_shading.program);
 	simple_shading.program = -1U;
 
+	SDL_CloseAudio();
+	SDL_FreeWAV(d0.wav_buffer);
+    SDL_FreeWAV(re.wav_buffer);
+    SDL_FreeWAV(mi.wav_buffer);
+    SDL_FreeWAV(fa.wav_buffer);
+    SDL_FreeWAV(so.wav_buffer);
+
 	GL_ERRORS();
 }
 
 void Game::generate_level() {
+    auto near_others = [&](uint32_t index, glm::uvec3 location) {
+            for (uint32_t i = 0; i < index; ++i) {
+                if (adjacent(key_counters[i]->location, location, 1.0f)) {
+                    return true;
+                }
+            }
+            return false;
+    };
+
     // Randomly place key counters on edges
 	std::set< Edge *> remaining_edges = edges;
 	for (uint32_t i = 0; i < 4; ++i) {
@@ -301,9 +344,13 @@ void Game::generate_level() {
 		uint32_t y = index % board_size.x;
 		glm::uvec3 location = glm::uvec3(x, y, 0.0f);
 
-        // Make sure counter doesn't spawn near avatar
-        while (adjacent(location, avatar_location, 2.0f)) {
+        // Make sure counter doesn't spawn near avatar or each other
+        uint32_t start_placement = placement;
+        while (adjacent(location, avatar_location, 1.0f) || near_others(i, location)) {
             placement = 1 + (placement + 1) % (max - 2);
+			if (placement == start_placement) {
+				break;
+			}
             uint32_t index = start + placement * increment;
             uint32_t x = index / board_size.x;
             uint32_t y = index % board_size.x;
@@ -312,7 +359,6 @@ void Game::generate_level() {
 
 		CounterInfo *counter = key_counters[i];
 		counter->location = location;
-		counter->edge = edge;
 
 		// Rotate the serve counter to point outwards
 		if (i == 3) {
@@ -346,30 +392,6 @@ bool Game::handle_event(SDL_Event const &evt, glm::uvec2 window_size) {
 		}
   	}
 
-    //----------------- Grid-based movement ------------------
-//    if (evt.type == SDL_KEYDOWN && evt.key.repeat == 0) {
-//        if (evt.key.keysym.scancode == SDL_SCANCODE_A) {
-//            avatar_location.x -= 1;
-//            avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(180.0f)));
-//        }
-//        if (evt.key.keysym.scancode == SDL_SCANCODE_D) {
-//            avatar_location.x += 1;
-//            avatar_rotation = glm::quat();
-//        }
-//        if (evt.key.keysym.scancode == SDL_SCANCODE_W) {
-//            avatar_location.y += 1;
-//            avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(90.0f)));
-//        }
-//        if (evt.key.keysym.scancode == SDL_SCANCODE_S) {
-//            avatar_location.y -= 1;
-//            avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(-90.0f)));
-//        }
-//
-//        avatar_location.x = glm::clamp(avatar_location.x, 1.0f, (float) board_size.x - 2);
-//        avatar_location.y = glm::clamp(avatar_location.y, 1.0f, (float) board_size.y - 2);
-//        return true;
-//    }
-
 	return false;
 }
 
@@ -377,85 +399,29 @@ void Game::update(float elapsed) {
 
     // --------------- Progress -------------------------------
     {
-        auto touching_counter = [&](CounterInfo *counter, glm::uvec3 compare_location) -> bool {
-			float x_lo = counter->location.x - 1.0f;
-			float x_hi = counter->location.x + 1.0f;
-			float y_lo = counter->location.y - 1.0f;
-			float y_hi = counter->location.y + 1.0f;
+    	CounterInfo *next_counter = level_progression[next_pickup];
+    	if (adjacent(next_counter->location, avatar_location, 0.5f)) {
 
-			if ((compare_location.x >= x_lo && compare_location.x <= x_hi) &&
-			    (compare_location.y >= y_lo && compare_location.y <= y_hi)) {
-				return true;
-			}
-			return false;
-        };
+    		// play sound
+    		Sound *next_note = notes[next_pickup];
+    		current_audio_pos = next_note->wav_buffer;
+    		current_audio_len = next_note->wav_length;
+    		if (SDL_OpenAudio(&(next_note->wav_spec), NULL) >= 0) {
+    			SDL_PauseAudio(0);
+    		}
 
-		if (touching_counter(&bread, avatar_location) && next_pickup == 0) {
-		    SDL_CloseAudio();
-            current_audio_pos = fa.wav_buffer;
-            current_audio_len = fa.wav_length;
-		    if ( SDL_OpenAudio(&fa.wav_spec, NULL) >= 0 ) {
-                SDL_PauseAudio(0);
-            }
-			progress.breadA = true;
-			++next_pickup;
-		}
-        if (touching_counter(&peanut, avatar_location) && next_pickup == 1) {
-            SDL_CloseAudio();
-            current_audio_pos = re.wav_buffer;
-            current_audio_len = re.wav_length;
-            if ( SDL_OpenAudio(&re.wav_spec, NULL) >= 0 ) {
-                SDL_PauseAudio(0);
-            }
-        	progress.peanut = true;
-        	++next_pickup;
-        }
-        if (touching_counter(&jelly, avatar_location) && next_pickup == 2) {
-            SDL_CloseAudio();
-            current_audio_pos = mi.wav_buffer;
-            current_audio_len = mi.wav_length;
-            if ( SDL_OpenAudio(&mi.wav_spec, NULL) >= 0 ) {
-                SDL_PauseAudio(0);
-            }
-        	progress.jelly = true;
-        	++next_pickup;
-        }
-		if (touching_counter(&bread, avatar_location) && next_pickup == 3) {
-            SDL_CloseAudio();
-            current_audio_pos = d0.wav_buffer;
-            current_audio_len = d0.wav_length;
-            if ( SDL_OpenAudio(&d0.wav_spec, NULL) >= 0 ) {
-                SDL_PauseAudio(0);
-            }
-			progress.breadB = true;
-			++next_pickup;
-		}
-        if (touching_counter(&serve, avatar_location) && next_pickup == 4) {
-            SDL_CloseAudio();
-            current_audio_pos = so.wav_buffer;
-            current_audio_len = so.wav_length;
-            if ( SDL_OpenAudio(&so.wav_spec, NULL) >= 0 ) {
-                SDL_PauseAudio(0);
-            }
-        	++levels_passed;
-        	if (levels_passed == 5) {
-        	    // TODO: level progression
-//        	    board_size.x += 2;
-//        	    board_size.y += 2;
-//        	    levels_passed = 0;
-        	}
-        	next_pickup = 0;
-			progress.breadA = false;
-        	progress.peanut = false;
-        	progress.jelly = false;
-			progress.breadB = false;
-        	generate_level();
-        }
+    		++next_pickup;
+    		if (next_pickup == level_progression.size()) {
+	        	++num_sandwiches;
+	        	next_pickup = 0;
+	        	generate_level();
+    		}
+    	}
     }
 
 	// --------------- Physics-based movement ---------------
 
-    // NOTE: Based on discussion from http://www.opengl-tutorial.org/intermediate-tutorials/tutorial-17-quaternions/
+    // NOTE: Movement based on discussion from http://www.cplusplus.com/forum/general/29835/
     // Default avatar orientation is (1,0);
     {
         if (controls.go_left) {
@@ -475,12 +441,26 @@ void Game::update(float elapsed) {
             avatar_rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(-90.0f)));
         }
 
-        //TODO: Add deceleration/friction
-        if (!controls.go_left && !controls.go_right) {
-            x_velocity = 0.0f;
+        // Decelerate to a stop
+        if (!controls.go_left && !controls.go_right && x_velocity != 0.0f) {
+        	int sign = x_velocity < 0 ? -1 : 1;
+            x_velocity -= sign * deceleration * elapsed;
+
+            if (sign > 0) {
+            	x_velocity = glm::clamp(x_velocity, 0.0f, max_velocity);
+            } else {
+            	x_velocity = glm::clamp(x_velocity, -max_velocity, 0.0f);
+            }
         }
-        if (!controls.go_up && !controls.go_down) {
-            y_velocity = 0.0f;
+        if (!controls.go_up && !controls.go_down && y_velocity != 0.0f) {
+			int sign = y_velocity < 0 ? -1 : 1;
+			y_velocity -= sign * deceleration * elapsed;
+
+			if (sign > 0) {
+				y_velocity = glm::clamp(y_velocity, 0.0f, max_velocity);
+			} else {
+				y_velocity = glm::clamp(y_velocity, -max_velocity, 0.0f);
+			}
         }
 
         x_velocity = glm::clamp(x_velocity, -max_velocity, max_velocity);
@@ -493,6 +473,14 @@ void Game::update(float elapsed) {
             avatar_location += mv;
             avatar_location.x = glm::clamp(avatar_location.x, 1.0f, (float) board_size.x - 2);
             avatar_location.y = glm::clamp(avatar_location.y, 1.0f, (float) board_size.y - 2);
+
+            // Prevent avatar from "sticking" to counters
+            if (avatar_location.x == 1.0f || avatar_location.x == board_size.x - 2) {
+                x_velocity = 0.0f;
+            }
+            if (avatar_location.y == 1.0f || avatar_location.y == board_size.y - 2) {
+                y_velocity = 0.0f;
+            }
         }
     }
 }
@@ -512,19 +500,11 @@ void Game::draw(glm::uvec2 drawable_size) {
 		//center of board will be placed at center of screen:
 		glm::vec2 center = 0.5f * glm::vec2(board_size);
 
-		//orthogonal sheared view
-        glm::mat4 shear_z = glm::mat4(
-                1.0f, 0.0f, 0.0f, 0.0f,
-                0.0f, 1.0f, 0.0f, 0.0f,
-                0.5f, -0.75f, 1.0f, 0.0f,
-                0.0f, 0.0f, 0.0f, 1.0f
-        );
-
 		//NOTE: glm matrices are specified in column-major order
-		world_to_clip = shear_z * glm::mat4(
+		world_to_clip = glm::mat4(
 			scale / aspect, 0.0f, 0.0f, 0.0f,
 			0.0f, scale, 0.0f, 0.0f,
-			0.0f, 0.0f,-0.25f, 0.0f,
+			0.0f, 0.0f, -1.0f, 0.0f,
 			-(scale / aspect) * center.x, -scale * center.y, 0.0f, 1.0f
 		);
 	}
@@ -542,7 +522,7 @@ void Game::draw(glm::uvec2 drawable_size) {
 	auto draw_mesh = [&](Mesh const &mesh, glm::mat4 const &object_to_world) {
 		//set up the matrix uniforms:
 		if (simple_shading.object_to_clip_mat4 != -1U) {
-			glm::mat4 object_to_clip = world_to_clip * object_to_world;
+			glm::mat4 object_to_clip = shear_z * scale_z * world_to_clip * object_to_world;
 			glUniformMatrix4fv(simple_shading.object_to_clip_mat4, 1, GL_FALSE, glm::value_ptr(object_to_clip));
 		}
 		if (simple_shading.object_to_light_mat4x3 != -1U) {
@@ -553,9 +533,8 @@ void Game::draw(glm::uvec2 drawable_size) {
 			glm::mat3 normal_to_world = glm::inverse(glm::transpose(glm::mat3(object_to_world)));
 			glUniformMatrix3fv(simple_shading.normal_to_light_mat3, 1, GL_FALSE, glm::value_ptr(normal_to_world));
 		}
-        if (simple_shading.mv_mat4 != -1U) {
-        	glm::mat4 mv_mat4 = projection * view * model;
-            glUniformMatrix4fv(simple_shading.mv_mat4, 1, GL_FALSE, glm::value_ptr(mv_mat4));
+        if (simple_shading.model_scale_mat4 != -1U) {
+            glUniformMatrix4fv(simple_shading.model_scale_mat4, 1, GL_FALSE, glm::value_ptr(model));
         }
 
 		//draw the mesh:
@@ -588,25 +567,45 @@ void Game::draw(glm::uvec2 drawable_size) {
 
 	draw_mesh(avatar_mesh, location_v3m4(avatar_location, avatar_rotation));
 
-	if (next_pickup == 0 || next_pickup == 3) {
-		draw_mesh(bread_mesh, location_v3m4(bread.location, bread.rotation));
-	} else {
-		draw_mesh(bread_gray, location_v3m4(bread.location, bread.rotation));
+	CounterInfo *current_counter = level_progression[next_pickup];
+	for (CounterInfo *c : key_counters) {
+		if (c == current_counter) {
+			draw_mesh(*(c->active), location_v3m4(c->location, c->rotation));
+		} else {
+			draw_mesh(*(c->inactive), location_v3m4(c->location, c->rotation));
+		}
 	}
-	if (next_pickup == 1) {
-		draw_mesh(peanut_mesh, location_v3m4(peanut.location, peanut.rotation));
+
+	auto draw_text = [&](Mesh const &mesh, glm::mat4 const &object_to_world) {
+		glm::mat4 object_to_clip = world_to_clip * object_to_world;
+		glUniformMatrix4fv(simple_shading.object_to_clip_mat4, 1, GL_FALSE, glm::value_ptr(object_to_clip));
+
+		glDrawArrays(GL_TRIANGLES, mesh.first, mesh.count);
+	};
+
+	glm::vec3 text_point = glm::vec3(1.75f, 1.75f, 0.001f);
+	draw_text(sandwiches_made, location_v3m4(text_point, glm::quat()));
+
+	text_point.x += 3.8f;
+	text_point.y -= 0.01f;
+
+	if (num_sandwiches == 0) {
+		draw_text(num0, location_v3m4(text_point, glm::quat()));
 	} else {
-		draw_mesh(peanut_gray, location_v3m4(peanut.location, peanut.rotation));
-	}
-	if (next_pickup == 2) {
-		draw_mesh(jelly_mesh, location_v3m4(jelly.location, jelly.rotation));
-	} else {
-		draw_mesh(jelly_gray, location_v3m4(jelly.location, jelly.rotation));
-	}
-	if (next_pickup == 4) {
-		draw_mesh(serve_mesh, location_v3m4(serve.location, serve.rotation));
-	} else {
-		draw_mesh(serve_gray, location_v3m4(serve.location, serve.rotation));
+		uint32_t num_to_show = num_sandwiches;
+		std::vector< uint32_t > order;
+
+		while (num_to_show > 0) {
+			uint32_t last_digit = num_to_show % 10;
+			order.insert(order.begin(), last_digit);
+			num_to_show /= 10;
+		}
+
+		for (uint32_t i = 0; i < order.size(); ++i) {
+			uint32_t d = order[i];
+			draw_text(*digits[d], location_v3m4(text_point, glm::quat()));
+			text_point.x += 0.25f;
+		}
 	}
 
 	glUseProgram(0);
@@ -623,14 +622,18 @@ static glm::mat4 location_v3m4(glm::vec3 v, glm::quat r) {
 	) * glm::mat4_cast(r);
 }
 
-static bool adjacent(glm::uvec3 locationA, glm::uvec3 locationB, float distance) {
-    float x_lo = locationA.x - distance;
-    float x_hi = locationA.x + distance;
-    float y_lo = locationA.y - distance;
-    float y_hi = locationA.y + distance;
+// Positions on grid where locationB is adjacent to locationA with leeway of 0.0f:
+//          B B B
+//          B A B
+//          B B B
+static bool adjacent(glm::vec3 locationA, glm::vec3 locationB, float leeway) {
+    float x_lo = locationA.x - 1.0f - leeway;
+    float x_hi = locationA.x + 2.0f + leeway;
+    float y_lo = locationA.y - 1.0f - leeway;
+    float y_hi = locationA.y + 2.0f + leeway;
 
-    if ((locationB.x >= x_lo && locationB.x <= x_hi) &&
-        (locationB.y >= y_lo && locationB.y <= y_hi)) {
+    if ((locationB.x >= x_lo && locationB.x + 1.0f <= x_hi) &&
+        (locationB.y >= y_lo && locationB.y + 1.0f <= y_hi)) {
         return true;
     }
     return false;
@@ -643,7 +646,8 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
 	}
 
 	len = ( len > (int)current_audio_len ? current_audio_len : len );
-	SDL_memcpy (stream, current_audio_pos, len);
+    SDL_memset(stream, 0, len);
+    SDL_MixAudio(stream, current_audio_pos, len, AUDIO_VOLUME);
 
 	current_audio_pos += len;
 	current_audio_len -= len;

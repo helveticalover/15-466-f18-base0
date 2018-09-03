@@ -1,11 +1,11 @@
 # Game Information
 (Note: fill in this portion with information about your game.)
 
-Title: (TODO: your game's title)
+Title: Undercooked
 
 Author: Yitong Li
 
-Design Document: [TODO: name of design document](TODO: link to design document)
+Design Document: Undercooked: http://graphics.cs.cmu.edu/courses/15-466-f18/game0-designs/jgualtie/
 
 Screen Shot:
 
@@ -15,11 +15,17 @@ Difficulties Encountered:
 
 TODO: write several sentences about any difficulties you may have encountered in creating the game.
 
+1. Audio
+2. Transformations
+
 Good Code:
 
 TODO: write a sentence or two about any code you think you did particularly well.
+1. Level progression
+2. Messaging
 
 Attributions:
+
 Xylophone sounds from https://freesound.org/people/morgantj/sounds/58634/
 
 # Using This Base Code
