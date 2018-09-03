@@ -1,5 +1,4 @@
 # Game Information
-(Note: fill in this portion with information about your game.)
 
 Title: Undercooked
 
@@ -21,7 +20,7 @@ Difficulties Encountered:
 
 Good Code:
 
-1. Level progression - I structured my code support arbitrary sequences and arbitrary sequence lengths in each level.
+1. Level progression - I structured my code to support arbitrary sequences and arbitrary sequence lengths in each level.
 
 2. Feel - A lot of effort went into the feel and responsiveness of the game. Character movement is smooth and affected by acceleration/deceleration. Colors, sounds and text contribute to game messaging.
 
